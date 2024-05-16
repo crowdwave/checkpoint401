@@ -1,0 +1,17 @@
+[
+  {
+    "method": "GET",
+    "routeURLPattern": "/api/users",
+    "routeEndpointTypeScriptFile": "getUsers.ts"
+  },
+  {
+    "method": "POST",
+    "routeURLPattern": "/api/createpost",
+    "routeEndpointTypeScriptFile": "createPost.ts"
+  },
+  {
+    "method": "PUT",
+    "routeURLPattern": "/api/posts/:id",
+    "routeEndpointTypeScriptFile": "updatePost.ts"
+  }
+]
