@@ -9,7 +9,7 @@ Note: Checkpoint 401 is new and not battle-tested. It should be used with cautio
 
 ## What is a Forward Auth Server?
 
-A forward authentication (auth) server is a specialised web server that handles authentication on behalf of another server. It acts as an intermediary, verifying user credentials before allowing access to protected resources. A forward auth server is used in conjunction with reverse proxies like Caddy, NGINX, and Traefik to enhance security and simplify authentication management.
+A forward auth server is a specialised web server that handles authentication on behalf of another server. It acts as an intermediary, verifying permissions for requests to access to protected resources. A forward auth server is used in conjunction with reverse proxies like Caddy, NGINX, and Traefik to enhance security and simplify auth management.
 
 ## Why separate authentication from the application server?
 
@@ -20,23 +20,21 @@ Instead of having auth code like spaghetti through your application code, you fo
 
 ## Core Concepts of Checkpoint 401
 
-Checkpoint 401 is written in Typescript and runs on Deno.
-Checkpoint 401 aims for simplicity and minimalism - it is easy to understand.
-Checkpoint 401 requires that you provide a routes.json file to define methods/URL patterns and an endpoint function to run when a request matches.
-The endpoint functions are written in TypeScript, must adhere to a specific signature and can return only true or false to allow or deny requests. 
-You can provide additional TypeScript files beyond the endpoint functions for additional logic.
-That is the entirety of Checkpoint 401.
+* Checkpoint 401 is written in Typescript and runs on Deno.
+* Checkpoint 401 aims for simplicity and minimalism - it is easy to understand.
+* Checkpoint 401 requires that you provide a routes.json file to define methods/URL patterns and an endpoint function to run when a request matches.
+* The endpoint functions are written in TypeScript, must adhere to a specific signature and can return only true or false to allow or deny requests. 
+* You can provide additional TypeScript files beyond the endpoint functions for additional logic.
+* That is the entirety of Checkpoint 401.
 
 ## Defining Routes
 
-    routes.json: This file defines the routes for the server. It should be a JSON array with each object containing the following properties:
-        method: HTTP method (GET, POST, etc.).
-        routeURLPattern: The route path for the request, which must be a URL pattern as defined in the URL Pattern API.
-        routeEndpointTypeScriptFile: The filename of the TypeScript endpoint handler located in the config directory.
+routes.json: This file defines the routes for the server. It should be a JSON array with each object containing the following properties:
+* method: HTTP method (GET, POST, etc.).
+* routeURLPattern: The route pattern to match to the inbound request url, which must be a URL pattern as defined in the URL Pattern API documented at: https://developer.mozilla.org/en-US/docs/Web/API/URLPattern/URLPattern
+* routeEndpointTypeScriptFile: The filename of the TypeScript endpoint handler located in the current working directory.
 
 Example routes.json
-
-json
 
     [
       {
@@ -58,12 +56,12 @@ json
 
 ## Writing Endpoint Functions
 
-Your TypeScript files must have a very specific signature to function correctly with Checkpoint 401. The function signature should be:
+Your TypeScript endpoint functions must have a very specific signature to function correctly with Checkpoint 401. The function signature should be:
 
     type EndpointFunction = (req: Request, match: URLPatternResult | null) => Promise<boolean>;
 
 Each TypeScript file must export a default function that adheres to this signature and returns a Promise resolving to true or false to indicate if the request is allowed or denied.
-Example Endpoint Function (config/getUsers.ts)
+Example Endpoint Function (config/getUsers.ts):
 
     export default async function getUsers(req: Request, match: URLPatternResult | null): Promise<boolean> {
         // Example logic to validate user
@@ -84,34 +82,7 @@ Example Endpoint Function (config/getUsers.ts)
 When the Checkpoint 401 server starts, it imports all the TypeScript files in the current working directory. This means you can import additional TypeScript files beyond the endpoint functions for the routes. These additional TypeScript files can contain any valid TypeScript code you want.
 Request Flow Diagram
 
-The following ASCII diagram illustrates how a request is handled:
-
-    +---------+           +----------------+          +-------------------+
-    | Client  |  ------>  | NGINX / Caddy  |  ----->  | Checkpoint 401    |
-    | Request |           | (Forward Auth) |          |                   |
-    +---------+           +----------------+          +-------------------+
-                                                               |
-                                                               v
-                                                   +-------------------+
-                                                   | Route Handler     |
-                                                   | (getUsers.ts)     |
-                                                   +-------------------+
-                                                               |
-                                                               v
-                                                   +-------------------+
-                                                   |   200 OK / 401    |
-                                                   |       Deny        |
-                                                   +-------------------+
-                                                               |
-                                                               v
-                                                   +-------------------+
-                                                   |  Checkpoint 401   |
-                                                   +-------------------+
-                                                               |
-                                                               v
-                                                   +-------------------+
-                                                   |  NGINX / Caddy    |
-                                                   +-------------------+
+The summarises how a request is handled:
 
 * Client Request: The client sends a request to the reverse proxy (NGINX/Caddy).
 * Forward Auth: NGINX/Caddy forwards the request to the Checkpoint 401 server.
@@ -119,7 +90,7 @@ The following ASCII diagram illustrates how a request is handled:
 * Route Handler: The handler function checks the request and returns true or false.
 * Decision: Checkpoint 401 returns a 200 OK response if the request is allowed, or a 401 Deny response if it is denied.
 * Response to NGINX/Caddy: The decision is sent back to NGINX/Caddy.
-* NGINX/Caddy Decision: NGINX/Caddy forwards the request to the application server if allowed.
+* NGINX/Caddy Decision: NGINX/Caddy forwards the request to the application server only if an HTTP status 200 was returned from the forward auth server.
 
 ## Why Use a Forward Auth Server?
 
@@ -156,7 +127,7 @@ Create a directory named config and place your routes.json file and endpoint Typ
 Change your current working directory to config and run the server:
 
     cd config
-    deno run --allow-net --allow-read --allow-write ../checkpoint401.ts --db-filename my_database.db
+    deno run --allow-net --allow-read --allow-write ../checkpoint401.ts 
 
 ## Command-Line Arguments
 
