@@ -11,7 +11,7 @@ A forward auth server is a specialised web server that handles authentication on
 
 ## Why separate authentication from the application server?
 
-When you separate auth from the application server, you no longer need to implement authentication logic in each application. This simplifies application code, reduces security risks, and provides a centralised authentication mechanism for all applications behind the reverse proxy.
+When you separate auth from the application server, you no longer need to implement as much authentication logic in each application - in an ideal case there would be no auth logic in your application - it would all be handled by the forward auth server. This simplifies application code, reduces security risks, and provides a centralised authentication mechanism for all applications behind the reverse proxy.
 
 
 Instead of having auth code like spaghetti through your application code, you focus your auth coding on the TypeScript endpoint functions in the Checkpoint 401 server. This makes your application code cleaner and easier to maintain.
@@ -75,6 +75,9 @@ Example Endpoint Function (config/getUsers.ts):
         const userExists = users.some(user => user.id === userId);
         return userExists;
     }
+
+The match argument contains the match returned by the URL Pattern match againstt the inbound request. The match object is what is returned by exec as defined here: https://developer.mozilla.org/en-US/docs/Web/API/URLPattern/exec
+
 
 ## Additional TypeScript Files
 
