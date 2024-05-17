@@ -9,6 +9,8 @@ May 2024 note: Checkpoint 401 is aimed at sophisticated TypeScript developers...
 
 A forward auth server is a specialised web server that handles authentication on behalf of another server. It acts as an intermediary, verifying permissions for requests to access resources. A forward auth server is used in conjunction with reverse proxies like Caddy, NGINX, and Traefik to enhance security and simplify auth management. These web servers have forward auth functionality which when enabled, sends inbound requests first to the forward auth server, and any other response than 200 OK means the web server will reject the request.
 
+Caddy forward auth doc: https://caddyserver.com/docs/caddyfile/directives/forward_auth
+
 ## Why separate authentication from the application server?
 
 When you separate auth from the application server, you no longer need to implement as much authentication logic in each application - in an ideal case there would be no auth logic in your application - it would all be handled by the forward auth server. This simplifies application code, reduces security risks, and provides a centralised authentication mechanism for all applications behind the reverse proxy.
