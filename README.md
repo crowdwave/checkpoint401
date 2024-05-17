@@ -15,6 +15,7 @@ A forward authentication (auth) server is a specialised web server that handles 
 
 When you separate auth from the application server, you no longer need to implement authentication logic in each application. This simplifies application code, reduces security risks, and provides a centralised authentication mechanism for all applications behind the reverse proxy.
 
+
 Instead of having auth code like spaghetti through your application code, you focus your auth coding on the TypeScript endpoint functions in the Checkpoint 401 server. This makes your application code cleaner and easier to maintain.
 
 ## Core Concepts of Checkpoint 401
