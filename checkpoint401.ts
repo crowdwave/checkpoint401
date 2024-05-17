@@ -24,7 +24,7 @@ The provided code supports command-line arguments for configuration. You can pas
 ./checkpoint401 --dir custom_config --disable-stats
  */
 
-type EndpointFunction = (req: Request, match: URLPatternResult | null) => boolean;
+type EndpointFunction = (req: Request, match: URLPatternResult | null) => Promise<boolean>;
 
 interface RouteItem {
     method: string;
