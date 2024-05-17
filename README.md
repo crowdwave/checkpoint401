@@ -82,16 +82,16 @@ The match argument contains the match returned by the URL Pattern match againstt
 ## Additional TypeScript Files
 
 When the Checkpoint 401 server starts, it imports all the TypeScript files in the current working directory. This means you can import additional TypeScript files beyond the endpoint functions for the routes. These additional TypeScript files can contain any valid TypeScript code you want.
-Request Flow Diagram
 
-The summarises how a request is handled:
+
+## Overview of how a request is handled:
 
 * Client Request: The client sends a request to the reverse proxy (NGINX/Caddy).
 * Forward Auth: NGINX/Caddy forwards the request to the Checkpoint 401 server.
 * Checkpoint 401: The request is processed by Checkpoint 401, which runs the appropriate route handler (e.g., getUsers.ts).
 * Route Handler: The handler function checks the request and returns true or false.
-* Decision: Checkpoint 401 returns a 200 OK response if the request is allowed, or a 401 Deny response if it is denied.
-* Response to NGINX/Caddy: The decision is sent back to NGINX/Caddy.
+* Decision: Checkpoint 401 returns a 200 OK response if the request is allowed, or a 401 Deny response if it is denied. The only other status values that Checkpoint 401 can return is 404 and 500.
+* Response to NGINX/Caddy: The decision is sent back to NGINX/Caddy as an HTTP status code, 200 is approved, 401 is denied, 404 is not found and 500 is server error.
 * NGINX/Caddy Decision: NGINX/Caddy forwards the request to the application server only if an HTTP status 200 was returned from the forward auth server.
 
 ## Why Use a Forward Auth Server?
