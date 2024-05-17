@@ -3,7 +3,7 @@
 
 # Checkpoint 401 Forward Auth Server
 
-May 2024 note: Checkpoint 401 is new and not battle-tested. You are welcome to use it but we recommend you first read the source code in detail and assure yourself of its' suitability for your needs. We welcome code reviews and feedback to improve its reliability and security. Checkpoint 401 has no guarantee at all - use at your own risk.
+May 2024 note: Checkpoint 401 is aiomed at sophisticated TypeScript developers... it is new and is not battle-tested. We recommend you first read the source code in detail and assure yourself of its suitability for your needs - there is only a single source file of about 500 lines - enough for a skilled TypeScript developer to understand. We welcome code reviews and feedback to improve its reliability and security. Checkpoint 401 has no guarantee at all - use at your own risk.
 
 ## What is a Forward Auth Server?
 
