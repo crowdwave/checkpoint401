@@ -3,11 +3,11 @@
 
 # Checkpoint 401 Forward Auth Server
 
-May 2024 note: Checkpoint 401 is aiomed at sophisticated TypeScript developers... it is new and is not battle-tested. We recommend you first read the source code in detail and assure yourself of its suitability for your needs - there is only a single source file of about 500 lines - enough for a skilled TypeScript developer to understand. We welcome code reviews and feedback to improve its reliability and security. Checkpoint 401 has no guarantee at all - use at your own risk.
+May 2024 note: Checkpoint 401 is aimed at sophisticated TypeScript developers... it is new and is not battle-tested. We recommend you first read the source code in detail and assure yourself of its suitability for your needs - there is only a single source file of about 500 lines - small enough for a skilled TypeScript developer to understand. We welcome code reviews and feedback to improve its reliability and security. Checkpoint 401 has no guarantee at all - use at your own risk.
 
 ## What is a Forward Auth Server?
 
-A forward auth server is a specialised web server that handles authentication on behalf of another server. It acts as an intermediary, verifying permissions for requests to access to protected resources. A forward auth server is used in conjunction with reverse proxies like Caddy, NGINX, and Traefik to enhance security and simplify auth management.
+A forward auth server is a specialised web server that handles authentication on behalf of another server. It acts as an intermediary, verifying permissions for requests to access resources. A forward auth server is used in conjunction with reverse proxies like Caddy, NGINX, and Traefik to enhance security and simplify auth management. These web servers have forward auth functionality which when enabled, sends inbound requests first to the forward auth server, and any other response than 200 OK means the web server will reject the request.
 
 ## Why separate authentication from the application server?
 
