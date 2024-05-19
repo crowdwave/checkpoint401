@@ -13,7 +13,7 @@ May 2024 note: Checkpoint 401 is aimed at sophisticated TypeScript developers...
 
 A forward auth server is a specialised web server that handles authentication on behalf of another server. It acts as an intermediary, verifying permissions for requests to access resources. A forward auth server is used in conjunction with reverse proxies like Caddy, NGINX, and Traefik to enhance security and simplify auth management. These web servers have forward auth functionality which when enabled, sends inbound requests first to the forward auth server, and any other response than 200 OK means the web server will reject the request.
 
-This diagram, stolen from the Traefik documentation link below, shows how a forward auth server fits into the architecture of a reverse proxy:
+This diagram, from the Traefik documentation link below, shows how a forward auth server fits into the architecture of a reverse proxy:
 
 ![](https://doc.traefik.io/traefik/assets/img/middleware/authforward.png)
 
@@ -26,7 +26,7 @@ Traefik forward auth doc: https://doc.traefik.io/traefik/middlewares/forwardauth
 
 ## Why separate auth from the application server?
 
-When you separate auth from the application server, you no longer need to implement as much authentication logic in each application - in an ideal case there would be no auth logic in your application - it would all be handled by the forward auth server. This simplifies application code, reduces security risks, and provides a centralised authentication mechanism for all applications behind the reverse proxy.
+When you separate auth from the application server, you no longer need to implement as much auth logic in each application - in an ideal case there would be no auth logic in your application - it would all be handled by the forward auth server. This simplifies application code, reduces security risks, and provides a centralised auth mechanism for all applications behind the reverse proxy.
 
 Instead of having auth code like spaghetti hairball gumball through your application code, you focus your auth coding on the TypeScript endpoint functions in the Checkpoint 401 server. This makes your application code cleaner and easier to maintain.
 
@@ -184,20 +184,20 @@ You will find there files that do things like process cookies and access a datab
 
 ### Using a forward auth server offers several benefits:
 
-**Centralized Authentication:**
-    With a forward auth server, authentication logic is centralized, making it easier to manage and update. This ensures that all applications behind the reverse proxy use the same authentication mechanism, providing consistency and reducing the risk of security gaps.
+**Centralized Auth:**
+    With a forward auth server, auth logic is centralized, making it easier to manage and update. This ensures that all applications behind the reverse proxy use the same auth mechanism, providing consistency and reducing the risk of security gaps.
 
 **Simplified Application Logic:**
-    By offloading authentication to a dedicated server, the application code becomes simpler and cleaner. The application can focus on its core functionality without worrying about authentication, resulting in easier maintenance and fewer bugs.
+    By offloading auth to a dedicated server, the application code becomes simpler and cleaner. The application can focus on its core functionality without worrying about auth, resulting in easier maintenance and fewer bugs.
 
 **Enhanced Security:**
-    A forward auth server provides a single point of control for authentication, allowing for better enforcement of security policies. It can integrate with various authentication providers (e.g., OAuth, LDAP) and implement advanced security features such as multi-factor authentication (MFA).
+    A forward auth server provides a single point of control for auth, allowing for better enforcement of security policies. 
 
 **Scalability:**
-    Centralizing authentication allows you to scale your applications independently of the authentication system. The forward auth server can handle authentication requests for multiple applications, improving overall system scalability and performance.
+    Centralizing auth allows you to scale your applications independently of the auth system. The forward auth server can handle authentication requests for multiple applications, improving overall system auth and performance.
 
 **Flexibility:**
-    Forward auth servers can be easily integrated with various reverse proxies like Caddy, NGINX, and Traefik. This flexibility allows you to choose the best reverse proxy for your needs while maintaining a consistent authentication mechanism.
+    Forward auth servers can be easily integrated with various reverse proxies like Caddy, NGINX, and Traefik. This flexibility allows you to choose the best reverse proxy for your needs while maintaining a consistent auth mechanism.
 
 ## Usage instructions
 
