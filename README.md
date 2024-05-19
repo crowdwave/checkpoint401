@@ -11,6 +11,11 @@ A forward auth server is a specialised web server that handles authentication on
 
 Caddy forward auth doc: https://caddyserver.com/docs/caddyfile/directives/forward_auth
 
+Nginx forward auth doc: https://docs.nginx.com/nginx/admin-guide/security-controls/configuring-subrequest-authentication/
+
+Traefik forward auth doc: https://doc.traefik.io/traefik/middlewares/forwardauth/
+
+
 ## Why separate authentication from the application server?
 
 When you separate auth from the application server, you no longer need to implement as much authentication logic in each application - in an ideal case there would be no auth logic in your application - it would all be handled by the forward auth server. This simplifies application code, reduces security risks, and provides a centralised authentication mechanism for all applications behind the reverse proxy.
