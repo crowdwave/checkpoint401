@@ -45,6 +45,11 @@ Example routes.json
     [
       {
         "method": "GET",
+        "routeURLPattern": "/index.html",
+        "routeEndpointTypeScriptFile": "authFuncAnonymous.ts"
+      },
+      {
+        "method": "GET",
         "routeURLPattern": "/api/users",
         "routeEndpointTypeScriptFile": "getUsers.ts"
       },
