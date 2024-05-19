@@ -272,3 +272,11 @@ The following ASCII diagram illustrates what Checkpoint 401 does when it starts 
 * Start HTTP Server: Finally, it starts the HTTP server, which listens on the specified port.
 
 This concludes the full document for Checkpoint 401 Forward Auth Server.
+
+**Security reports**
+
+If you have a security concern, please email andrew.stuart@supercoders.com.au
+
+**License**
+
+MIT
