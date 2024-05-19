@@ -37,6 +37,7 @@ Instead of having auth code like spaghetti through your application code, you fo
 
 Have a look at the files in the config directory of this repository for a practical example of how to use Checkpoint 401. 
 
+Exploring the code in the config directory will give you an understanding that you cannot get from reading this documentation page alone.
 
 ## Defining Routes
 
