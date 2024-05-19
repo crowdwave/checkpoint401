@@ -1,0 +1,13 @@
+[Unit]
+Description=checkpoint401
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/deno run --allow-net --allow-read --allow-env --allow-write /opt/checkpoint401/checkpoint401.ts
+WorkingDirectory=/opt/checkpoint401/config
+Restart=always
+User=ubuntu
+Environment=PATH=/usr/bin:/usr/local/bin
+
+[Install]
+WantedBy=multi-user.target
