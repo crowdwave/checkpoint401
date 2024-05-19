@@ -82,7 +82,7 @@ Your TypeScript endpoint functions must have a very specific signature to functi
 
     type EndpointFunction = (req: Request, match: URLPatternResult | null) => Promise<boolean>;
 
-Each TypeScript file must export a default function that adheres to this signature and returns a Promise resolving to true or false to indicate if the request is allowed or denied.
+**Each endpoint function TypeScript file must export a default function that adheres to this signature and returns a Promise resolving to true or false to indicate if the request is allowed or denied.**
 
 Example endpoint function for anonymous:
 
@@ -158,6 +158,9 @@ This is an example of how you can use the match object to get values from the in
 
 When the Checkpoint 401 server starts, it imports all the TypeScript files in the current working directory. This means you can import additional TypeScript files beyond the endpoint functions for the routes. These additional TypeScript files can contain any valid TypeScript code you want.
 
+Have a look in the config directory of this repository for an example of how to use additional TypeScript files.
+
+You will find there files that do things like process cookies and access a database to look up user details.
 
 ## Overview of how a request is handled:
 
