@@ -5,6 +5,11 @@
 <b>Checkpoint 401 aims to be the SIMPLEST Forward Auth Security Server to implement and use - this is the primary goal. Checkpoint 401 is written in TypeScript and Deno and you need to write TypeScript code to utilise it in your applications.</b>
 </p>
 
+The entire source is 500 lines of TypeScript code - it is a ten minute read:
+
+https://github.com/crowdwave/checkpoint401/blob/master/checkpoint401.ts
+
+
 # Checkpoint 401 Forward Auth Security Server
 
 May 2024 note: Checkpoint 401 is aimed at sophisticated TypeScript developers... it is new and is not battle-tested. We recommend you first read the source code in detail and assure yourself of its suitability for your needs - there is only a single source file of about 500 lines - small enough for a skilled TypeScript developer to understand. We welcome code reviews and feedback to improve its reliability and security. Checkpoint 401 has no guarantee at all - use at your own risk.
