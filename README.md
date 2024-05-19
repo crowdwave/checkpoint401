@@ -93,19 +93,19 @@ The filename of your endpoint function must match the routeEndpointTypeScriptFil
 
 Your TypeScript endpoint functions must have a very specific signature to function correctly with Checkpoint 401. The function signature should be:
 
-    type EndpointFunction = (req: Request, match: URLPatternResult | null) => Promise<boolean>;
+    type EndpointFunction = (req: Request, match: URLPatternResult | null) => Promise<{ success: boolean; errorMessage?: string; }>;
 
 **Each endpoint function TypeScript file must export a default function that adheres to this signature and returns a Promise resolving to true or false to indicate if the request is allowed or denied.**
 
 Example endpoint function for anonymous:
 
-    export default async function authFuncAnonymous(req: Request, match: URLPatternResult | null): Promise<boolean> {
-        return true;
+    export default async function authFuncAnonymous(req: Request, match: URLPatternResult | null): Promise<{ success: boolean; errorMessage?: string; }> {
+        return { success: true };
     }
 
 Example endpoint Function (config/getUsers.ts):
 
-    export default async function getUsers(req: Request, match: URLPatternResult | null): Promise<boolean> {
+    export default async function getUsers(req: Request, match: URLPatternResult | null): Promise<{ success: boolean; errorMessage?: string; }> {
         // Example logic to validate user
         const userId = 2;
         const users = [
@@ -116,12 +116,12 @@ Example endpoint Function (config/getUsers.ts):
     
         // Check if the request contains a user with an id of 2
         const userExists = users.some(user => user.id === userId);
-        return userExists;
+        return { success: userExists};
     }
 
 Another example endpoint function:
 
-    export default async function myAuthEndpointFunction(req: Request, match: URLPatternResult | null): Promise<boolean> {
+    export default async function myAuthEndpointFunction(req: Request, match: URLPatternResult | null): Promise<{ success: boolean; errorMessage?: string; }> {
         try {
             // Perform asynchronous operations, such as fetching data or processing the request
             const response = await fetch(req.url);
@@ -129,13 +129,13 @@ Another example endpoint function:
             
             // Perform some logic with the data
             if (data.someCondition) {
-                return true;
+                return { success: true};
             } else {
-                return false;
+                return { success: false};
             }
         } catch (error) {
             console.error('Error handling request:', error);
-            return false;
+            return { success: false};
         }
     }
 
@@ -158,12 +158,13 @@ This is an example of how you can use the match object to get values from the in
     export default async function authFuncUsernameInURLMustMatchSignedInUser(
         req: Request,
         match: URLPatternResult | null,
-    ): Promise<boolean> {
+    ): Promise<{ success: boolean; errorMessage?: string; }> {
         const userId = await getUserIdFromRequest(req);
         if (!userId) return false;
         const userFromDb: UserMinimal | null = await queryGetUser(undefined, undefined, userId);
         if (!userFromDb) return false
-        return match?.pathname?.groups?.username === userFromDb.username;
+        const outcome = rmatch?.pathname?.groups?.username === userFromDb.username;
+        return { success: outcome };
     }
 
 

@@ -24,7 +24,7 @@ The provided code supports command-line arguments for configuration. You can pas
 ./checkpoint401 --dir custom_config --disable-stats
  */
 
-type EndpointFunction = (req: Request, match: URLPatternResult | null) => Promise<boolean>;
+type EndpointFunction = (req: Request, match: URLPatternResult | null) => Promise<{ success: boolean; errorMessage?: string; }>;
 
 interface RouteItem {
     method: string;
@@ -205,12 +205,13 @@ const makeResponse = (
     applicationOptions: ApplicationOptions,
     request: Request,
     URLPatternPathname: string | null,
+    errorMessage?: string,
 ): Response => {
     if (applicationOptions.verbose) {
-        //console.log(`[${new Date().toISOString()}] status: ${statusCode} method: ${request.method} pattern: ${URLPatternPathname} request.url: ${request.url}`);
         console.log(`[${new Date().toISOString()}] status: ${statusCode} method: ${request.method} pattern: ${URLPatternPathname} request.url: ${request.url}`);
     }
-    return new Response(null, {status: statusCode});
+    const body = statusCode === 401 && errorMessage ? JSON.stringify({ error: errorMessage }) : null;
+    return new Response(body, {status: statusCode});
 }
 
 interface routerInternalRoute {
@@ -243,11 +244,11 @@ class URLPatternRouter {
             for (const routerInternalRoute of this.routerInternalRoute) {
                 const match = routerInternalRoute.pattern.exec(request.url);
                 if (request.method === routerInternalRoute.method && match) {
-                    const result: boolean = await routerInternalRoute.endpointFunction(request, match);
-                    if (result) {
+                    const result: { success: boolean; errorMessage?: string; } = await routerInternalRoute.endpointFunction(request, match);
+                    if (result.success) {
                         return makeResponse(200, this.applicationOptions, request, routerInternalRoute.pattern.pathname);
                     } else {
-                        return makeResponse(401, this.applicationOptions, request, routerInternalRoute.pattern.pathname);
+                        return makeResponse(401, this.applicationOptions, request, routerInternalRoute.pattern.pathname, result.errorMessage);
                     }
                 }
             }
