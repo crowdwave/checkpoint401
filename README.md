@@ -20,8 +20,7 @@ Traefik forward auth doc: https://doc.traefik.io/traefik/middlewares/forwardauth
 
 When you separate auth from the application server, you no longer need to implement as much authentication logic in each application - in an ideal case there would be no auth logic in your application - it would all be handled by the forward auth server. This simplifies application code, reduces security risks, and provides a centralised authentication mechanism for all applications behind the reverse proxy.
 
-
-Instead of having auth code like spaghetti through your application code, you focus your auth coding on the TypeScript endpoint functions in the Checkpoint 401 server. This makes your application code cleaner and easier to maintain.
+Instead of having auth code like spaghetti hairball gumball through your application code, you focus your auth coding on the TypeScript endpoint functions in the Checkpoint 401 server. This makes your application code cleaner and easier to maintain.
 
 ## Core Concepts of Checkpoint 401
 
