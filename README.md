@@ -67,7 +67,14 @@ Your TypeScript endpoint functions must have a very specific signature to functi
     type EndpointFunction = (req: Request, match: URLPatternResult | null) => Promise<boolean>;
 
 Each TypeScript file must export a default function that adheres to this signature and returns a Promise resolving to true or false to indicate if the request is allowed or denied.
-Example Endpoint Function (config/getUsers.ts):
+
+Example endpoint function for anonymous:
+
+    export default async function authFuncAnonymous(req: Request, match: URLPatternResult | null): Promise<boolean> {
+        return true;
+    }
+
+Example endpoint Function (config/getUsers.ts):
 
     export default async function getUsers(req: Request, match: URLPatternResult | null): Promise<boolean> {
         // Example logic to validate user
@@ -81,6 +88,26 @@ Example Endpoint Function (config/getUsers.ts):
         // Check if the request contains a user with an id of 2
         const userExists = users.some(user => user.id === userId);
         return userExists;
+    }
+
+Another example endpoint function:
+
+    export default async function myAuthEndpointFunction(req: Request, match: URLPatternResult | null): Promise<boolean> {
+        try {
+            // Perform asynchronous operations, such as fetching data or processing the request
+            const response = await fetch(req.url);
+            const data = await response.json();
+            
+            // Perform some logic with the data
+            if (data.someCondition) {
+                return true;
+            } else {
+                return false;
+            }
+        } catch (error) {
+            console.error('Error handling request:', error);
+            return false;
+        }
     }
 
 The match argument contains the match returned by the URL Pattern match againstt the inbound request. The match object is what is returned by exec as defined here: https://developer.mozilla.org/en-US/docs/Web/API/URLPattern/exec
@@ -119,10 +146,6 @@ When the Checkpoint 401 server starts, it imports all the TypeScript files in th
 
 **Flexibility:**
     Forward auth servers can be easily integrated with various reverse proxies like Caddy, NGINX, and Traefik. This flexibility allows you to choose the best reverse proxy for your needs while maintaining a consistent authentication mechanism.
-
-## Web servers that implement Forward Auth:
-
-Popular reverse proxy servers like Caddy, NGINX, and Traefik support forward authentication configurations, enabling them to delegate authentication responsibilities to a dedicated server like Checkpoint 401.
 
 ## Usage instructions
 
