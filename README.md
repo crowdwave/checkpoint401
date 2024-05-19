@@ -41,7 +41,7 @@ Instead of having auth code like spaghetti hairball gumball through your applica
 * Checkpoint 401 aims for simplicity and minimalism - it is easy to understand.
 * Checkpoint 401 requires that you provide a routes.json file to define methods/URL patterns and an endpoint function to run when a request matches.
 * You write the endpoint functions in TypeScript.
-* Your endpoint functions must adhere to a specific signature and can return only true or false to allow or deny requests. 
+* Your endpoint functions must adhere to a specific signature, returning true or false to allow or deny requests and an optional error message. 
 * You can provide additional TypeScript files beyond the endpoint functions for additional logic.
 * That is the entirety of Checkpoint 401.
 
