@@ -1,17 +1,28 @@
 [
   {
     "method": "GET",
-    "routeURLPattern": "/api/users",
-    "routeEndpointTypeScriptFile": "getUsers.ts"
+    "routeURLPattern": "/api/v1/auth/signin",
+    "routeEndpointTypeScriptFile": "authFuncAnonymous.ts"
   },
   {
-    "method": "POST",
-    "routeURLPattern": "/api/createpost",
-    "routeEndpointTypeScriptFile": "createPost.ts"
+    "method": "GET",
+    "routeURLPattern": "/api/v1/channel/subscribercount/:username",
+    "routeEndpointTypeScriptFile": "authFuncUsernameInURLMustMatchSignedInUser.ts"
   },
   {
-    "method": "PUT",
-    "routeURLPattern": "/api/posts/:id",
-    "routeEndpointTypeScriptFile": "updatePost.ts"
+    "method": "GET",
+    "routeURLPattern": "/api/v1/channel/info/:username",
+    "routeEndpointTypeScriptFile": "authFuncUsernameInURLMustMatchSignedInUser.ts"
+  },
+  {
+    "method": "GET",
+    "routeURLPattern": "/api/v1/channel/waves/:username",
+    "routeEndpointTypeScriptFile": "authFuncUsernameInURLMustMatchSignedInUser.ts"
+  },
+  {
+    "method": "GET",
+    "routeURLPattern": "/api/v1/channel/issubscribed/:username",
+    "routeEndpointTypeScriptFile": "authFuncUsernameInURLMustMatchSignedInUser.ts"
   }
 ]
+
