@@ -33,6 +33,11 @@ Instead of having auth code like spaghetti through your application code, you fo
 * You can provide additional TypeScript files beyond the endpoint functions for additional logic.
 * That is the entirety of Checkpoint 401.
 
+## Practical usage example
+
+Have a look at the files in the config directory of this repository for a practical example of how to use Checkpoint 401. 
+
+
 ## Defining Routes
 
 routes.json: This file defines the routes for the server. It should be a JSON array with each object containing the following properties:
