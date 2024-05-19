@@ -120,6 +120,12 @@ Another example endpoint function:
         }
     }
 
+## Accessing cookies in the request
+
+This file in the repository shows how to access cookies in the request: 
+
+https://github.com/crowdwave/checkpoint401/blob/master/config/getUserIdFromRequest.ts
+
 ## Getting values from the inbound URL via the match object
 
 The match argument contains the match returned by the URL Pattern match against the inbound request. The match object is what is returned by exec as defined here: https://developer.mozilla.org/en-US/docs/Web/API/URLPattern/exec
