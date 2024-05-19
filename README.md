@@ -131,7 +131,7 @@ Another example endpoint function:
             if (data.someCondition) {
                 return { success: true};
             } else {
-                return { success: false, errorMessage: 'Request denied'
+                return { success: false, errorMessage: 'Request denied'}
             }
         } catch (error) {
             console.error('Error handling request:', error);
