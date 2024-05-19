@@ -87,7 +87,7 @@ Example routes.json
 
 The endpoint function in Checkpoint 401 does the job of checking if a request is allowed or denied.
 
-It may only return boolean true or false to indicate if the request is allowed or denied.
+It may only return boolean true or false to indicate if the request is allowed or denied, along with an optional errorMessage to return a message to the client.
 
 The filename of your endpoint function must match the routeEndpointTypeScriptFile in routes.json.
 
@@ -95,7 +95,7 @@ Your TypeScript endpoint functions must have a very specific signature to functi
 
     type EndpointFunction = (req: Request, match: URLPatternResult | null) => Promise<{ success: boolean; errorMessage?: string; }>;
 
-**Each endpoint function TypeScript file must export a default function that adheres to this signature and returns a Promise resolving to true or false to indicate if the request is allowed or denied.**
+**Each endpoint function TypeScript file must export a default function that adheres to this signature.**
 
 Example endpoint function for anonymous:
 
@@ -131,11 +131,11 @@ Another example endpoint function:
             if (data.someCondition) {
                 return { success: true};
             } else {
-                return { success: false};
+                return { success: false, errorMessage: 'Request denied'
             }
         } catch (error) {
             console.error('Error handling request:', error);
-            return { success: false};
+            return { success: false, errorMessage: 'An error occurred while processing the request'};
         }
     }
 
@@ -160,11 +160,15 @@ This is an example of how you can use the match object to get values from the in
         match: URLPatternResult | null,
     ): Promise<{ success: boolean; errorMessage?: string; }> {
         const userId = await getUserIdFromRequest(req);
-        if (!userId) return false;
+        if (!userId) return { success: false, errorMessage: "Failed to get ID from cookie"};
         const userFromDb: UserMinimal | null = await queryGetUser(undefined, undefined, userId);
-        if (!userFromDb) return false
-        const outcome = rmatch?.pathname?.groups?.username === userFromDb.username;
-        return { success: outcome };
+        if (!userFromDb) return { success: false, errorMessage: "User not found"}
+        const outcome  = match?.pathname?.groups?.username === userFromDb.username;
+        if (outcome) {
+            return { success: true}
+        } else {
+            return { success: false, errorMessage: "User not found"}
+        }
     }
 
 
