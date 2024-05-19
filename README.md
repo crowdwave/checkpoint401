@@ -1,7 +1,9 @@
 
 ![logo](https://github.com/crowdwave/checkpoint401/assets/13228330/361e7e01-540c-4d1b-9a80-1f43f9ef2f5d)
 
+<p align="center">
 **Checkpoint 401 aims to be the SIMPLEST Forward Auth Security Server to implement and use - this is the primary goal. It uses TypeScript and Deno.**
+</p>
 
 # Checkpoint 401 Forward Auth Security Server
 
