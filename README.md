@@ -120,7 +120,26 @@ Another example endpoint function:
         }
     }
 
+## Getting values fropm the inbound URL
+
 The match argument contains the match returned by the URL Pattern match againstt the inbound request. The match object is what is returned by exec as defined here: https://developer.mozilla.org/en-US/docs/Web/API/URLPattern/exec
+
+Most useful, simply console.log it:
+
+    console.log(match);    
+
+This is an example of how you can use the match object to get values from the inbound URL:
+
+    export default async function authFuncUsernameInURLMustMatchSignedInUser(
+        req: Request,
+        match: URLPatternResult | null,
+    ): Promise<boolean> {
+        const userId = await getUserIdFromRequest(req);
+        if (!userId) return false;
+        const userFromDb: UserMinimal | null = await queryGetUser(undefined, undefined, userId);
+        if (!userFromDb) return false
+        return match?.pathname?.groups?.username === userFromDb.username;
+    }
 
 
 ## Additional TypeScript Files
