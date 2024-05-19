@@ -120,9 +120,9 @@ Another example endpoint function:
         }
     }
 
-## Getting values fropm the inbound URL
+## Getting values from the inbound URL via the match object
 
-The match argument contains the match returned by the URL Pattern match againstt the inbound request. The match object is what is returned by exec as defined here: https://developer.mozilla.org/en-US/docs/Web/API/URLPattern/exec
+The match argument contains the match returned by the URL Pattern match against the inbound request. The match object is what is returned by exec as defined here: https://developer.mozilla.org/en-US/docs/Web/API/URLPattern/exec
 
 Most useful, simply console.log it:
 
