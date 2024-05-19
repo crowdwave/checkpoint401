@@ -72,6 +72,12 @@ Example routes.json
 
 ## Writing Endpoint Functions
 
+The endpoint function in Checkpoint 401 does the job of checking if a request is allowed or denied.
+
+It may only return boolean true or false to indicate if the request is allowed or denied.
+
+The filename of your endpoint function must match the routeEndpointTypeScriptFile in routes.json.
+
 Your TypeScript endpoint functions must have a very specific signature to function correctly with Checkpoint 401. The function signature should be:
 
     type EndpointFunction = (req: Request, match: URLPatternResult | null) => Promise<boolean>;
