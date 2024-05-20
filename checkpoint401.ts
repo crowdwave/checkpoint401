@@ -144,12 +144,8 @@ async function setupRoutes(
         }));
         const urlPatternRouter: URLPatternRouter = new URLPatternRouter(applicationOptions)
         for (const routeConfig of routeItems) {
-            //const filePath = `${Deno.realPathSync('.')}/${routeConfig.routeEndpointTypeScriptFile}`;
             const filePath = `./config/${routeConfig.routeEndpointTypeScriptFile}`;
             try {
-                /*                if (!routeConfig.routeEndpointTypeScriptFile.startsWith('./')) {
-                                    routeConfig.routeEndpointTypeScriptFile = './' + routeConfig.routeEndpointTypeScriptFile;
-                                }*/
                 console.log(`Importing ${filePath} .....`);
                 const endpointModule = await import(filePath);
                 if (!endpointModule.default) {
@@ -272,10 +268,10 @@ function createEndpointFunctionProxy(fn: Function, routeConfig: RouteItem, appli
                 }
                 // Update the stats
                 result.success ? (routeConfig.passCount = (routeConfig.passCount || 0) + 1) : (routeConfig.failCount = (routeConfig.failCount || 0) + 1);
-                return result.success;
+                return result;
             } catch (error) {
                 console.error(error);
-                return false;
+                return {success: false, errorMessage: "Unknown error"};
             }
         },
     }) as EndpointFunction;
