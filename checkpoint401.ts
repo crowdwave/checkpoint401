@@ -271,7 +271,7 @@ function createEndpointFunctionProxy(fn: Function, routeConfig: RouteItem, appli
                 return result;
             } catch (error) {
                 console.error(error);
-                return {success: false, errorMessage: "Unknown error"};
+                return {success: false, errorMessage: "Unknown auth error"};
             }
         },
     }) as EndpointFunction;
