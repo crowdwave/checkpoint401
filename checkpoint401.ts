@@ -1,6 +1,6 @@
 import {DB} from "https://deno.land/x/sqlite/mod.ts";
 
-const VERSION: number = 1;
+const VERSION: number = 2;
 
 /*
 to run:
