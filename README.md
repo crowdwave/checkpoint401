@@ -280,7 +280,7 @@ This concludes the full document for Checkpoint 401 Forward Auth Server.
 
 **Security reports**
 
-If you have a security concern, please email andrew.stuart@supercoders.com.au
+If you have a security concern, please email andrew.stuart@supercoders.com.au AND leave a security issue in the GitHub issues - do not disclose it there, just say you have a security concern and we will contact you. 
 
 **License**
 

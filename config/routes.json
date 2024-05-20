@@ -11,17 +11,17 @@
   },
   {
     "method": "GET",
-    "routeURLPattern": "/api/v1/channel/info/:username",
+    "routeURLPattern": "/api/v1/project/info/:username",
     "routeEndpointTypeScriptFile": "authFuncUsernameInURLMustMatchSignedInUser.ts"
   },
   {
     "method": "GET",
-    "routeURLPattern": "/api/v1/channel/waves/:username",
+    "routeURLPattern": "/api/v1/user/settings/:username",
     "routeEndpointTypeScriptFile": "authFuncUsernameInURLMustMatchSignedInUser.ts"
   },
   {
     "method": "GET",
-    "routeURLPattern": "/api/v1/channel/issubscribed/:username",
+    "routeURLPattern": "/api/v1/report/income/:username",
     "routeEndpointTypeScriptFile": "authFuncUsernameInURLMustMatchSignedInUser.ts"
   }
 ]

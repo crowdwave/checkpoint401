@@ -1,8 +1,8 @@
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
-import { DotenvConfig, config } from "https://deno.land/x/dotenv@v3.2.2/mod.ts";
+import { config } from "https://deno.land/x/dotenv@v3.2.2/mod.ts";
 
 // Load environment variables
-const env: DotenvConfig = config({ path: ".env" });
+const env = config({ path: ".env" });
 
 if (!env.DATABASE_URL) {
   console.log("env.DATABASE_URL invalid");
