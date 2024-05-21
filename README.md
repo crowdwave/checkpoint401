@@ -252,14 +252,18 @@ Change your current working directory to config and run the server:
 
 Checkpoint 401 has several optional command-line arguments:
 
-    --config-dir <config-dir>: Path to the directory containing configuration files (default: .).
-    --db-filename <database_path>: Path to the SQLite database file (default: route_stats_counters.db).
-    --update-period <update_period_in_milliseconds>: Period in milliseconds to update the database and write counters to disk (default: 10000).
-    --disable-stats: Disable the stats feature.
-    --version: Display server version.
-    --help: Show help message.
-    --port <port_number>: Port number to listen on (default: 3000 or PORT environment variable).
-    --listen-address <listen_address>: Address to listen on (default: 0.0.0.0 or LISTEN_ADDRESS environment variable).
+- `--config-dir <config-dir>`: Path to the directory containing configuration files (default: .).
+- `--db-filename <database_path>`: Path to the SQLite database file (default: route_stats_counters.db).
+- `--update-period <update_period_in_milliseconds>`: Period in milliseconds to update the database and write counters to disk (default: 10000).
+- `--disable-stats`: Disable the stats feature.
+- `--version`: Display server version.
+- `--help`: Show help message.
+- `--port <port_number>`: Port number to listen on (default: 3000 or PORT environment variable).
+- `--listen-address <listen_address>`: Address to listen on (default: 0.0.0.0 or LISTEN_ADDRESS environment variable).
+- `--header-name-uri <header_name>`: The name of the header that contains the URI of the inbound request (default: X-Original-URI).
+- `--header-name-method <header_name>`: The name of the header that contains the method of the inbound request (default: X-Original-Method).
+
+The `--header-name-uri` and `--header-name-method` arguments are particularly important as they define the headers that Checkpoint 401 will use to pass the URI and method of the inbound request to your endpoint function. The exact headers used can differ between Nginx/Caddy/Traefik and are also configurable by you in your web server setup.
 
 ## How It Works - Startup Process
 
