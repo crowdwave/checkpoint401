@@ -55,7 +55,7 @@ Pay particular attention to these two command line arguments:
 
 --header-name-method
 
-**_To understand why they important, you must first understand that Nginx and Caddy (and presumably Traefik) will pass the URI and method of the inbound request to the forward auth server in headers._**
+**_To understand why these are important, you must first understand that Nginx and Caddy (and presumably Traefik) will pass the URI and method of the inbound request to the forward auth server in headers._**
 
 **_The exact headers they use differs between Nginx/Caddy/Traefik and is also configurable by you in your web server setup._**
 
@@ -63,12 +63,12 @@ So these define the headers that Checkpoint 401 will use to pass the URI and met
 
 ## Steps you need to take to use Checkpoint 401 
 
-1: clone the repository
-2: install Deno
-3: create your routes.json file (or modify the example one in the repository)
-4: write your endpoint functions in TypeScript
-5: run the server, making sure to specify --header-name-uri and --header-name-method correctly for your web server setup.
-6: configure a systemd service file to run the server as a service (see the example provided) 
+1. clone the repository
+2. install Deno
+3. create your routes.json file (or modify the example one in the repository)
+4. write your endpoint functions in TypeScript
+5. run the server, making sure to specify --header-name-uri and --header-name-method correctly for your web server setup.
+6. configure a systemd service file to run the server as a service (see the example provided) 
 
 ## Practical usage example
 
