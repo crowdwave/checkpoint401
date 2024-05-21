@@ -52,11 +52,12 @@ Instead of having auth code like spaghetti hairball gumball through your applica
 Pay particular attention to these two command line arguments:
 
 --header-name-uri
+
 --header-name-method
 
-**_To understand why they important, you must first understand that Nginx and Caddy (and presumably Traefik) will pass the URI and method of the inbound request to the forward auth server in headers.**_
+**_To understand why they important, you must first understand that Nginx and Caddy (and presumably Traefik) will pass the URI and method of the inbound request to the forward auth server in headers._**
 
-**_The exact headers they use differs between Nginx/Caddy/Traefik and is also configurable by you in your web server setup.**_
+**_The exact headers they use differs between Nginx/Caddy/Traefik and is also configurable by you in your web server setup._**
 
 So these define the headers that Checkpoint 401 will use to pass the URI and method of the inbound request to your endpoint function.
 
