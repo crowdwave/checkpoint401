@@ -278,6 +278,48 @@ The following ASCII diagram illustrates what Checkpoint 401 does when it starts 
 
 This concludes the full document for Checkpoint 401 Forward Auth Server.
 
+**Example nginx configuration**
+
+**_This is untested!_** It is an example of how you might configure NGINX to use Checkpoint 401:
+
+    server {
+        listen 80;
+        server_name example.com;
+    
+        location /protected/ {
+            auth_request /auth;  # This specifies the subrequest location for authentication
+    
+            # Define the behavior when access is denied
+            error_page 401 = @error401;
+            error_page 403 = @error403;
+    
+            # The actual resource
+            proxy_pass http://backend;
+        }
+    
+        location = /auth {
+            internal;  # This location should not be accessed directly by clients
+            proxy_pass http://auth_service;  # The authentication service
+    
+            # Pass the necessary headers to the authentication service
+            proxy_set_header X-Original-URI $request_uri;
+            proxy_set_header X-Original-Method $request_method;
+            proxy_set_header X-Original-Host $host;
+            proxy_set_header X-Original-IP $remote_addr;
+        }
+    
+        # Define the error handler locations
+        location @error401 {
+            return 401 'Unauthorized';
+        }
+    
+        location @error403 {
+            return 403 'Forbidden';
+        }
+    }
+
+
+
 **Security reports**
 
 If you have a security concern, please email andrew.stuart@supercoders.com.au AND leave a security issue in the GitHub issues - do not disclose it there, just say you have a security concern and we will contact you. 

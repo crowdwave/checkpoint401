@@ -1,6 +1,6 @@
 import {DB} from "https://deno.land/x/sqlite@v3.8/mod.ts";
 
-const VERSION: number = 2;
+const VERSION: number = 3;
 
 /*
 to run:
@@ -18,6 +18,8 @@ The provided code supports command-line arguments for configuration. You can pas
     --db-filename <database_path>: Path to the SQLite database file (default: route_stats_counters.db)
     --update-period <update_period_in_milliseconds>: Period in milliseconds to update the database and write counters to disk (default: 10000)
     --disable-stats: Disable the stats feature
+    --header-name-uri <header_name>: Name of the header for URI (default: X-Forwarded-Uri)
+    --header-name-method <header_name>: Name of the header for method (default: X-Forwarded-Method)
     --version: Display server version
     --help: Show help message
 
@@ -206,7 +208,7 @@ const makeResponse = (
     if (applicationOptions.verbose) {
         console.log(`[${new Date().toISOString()}] status: ${statusCode} method: ${request.method} pattern: ${URLPatternPathname} request.url: ${request.url}`);
     }
-    const body = statusCode === 401 && errorMessage ? JSON.stringify({ error: errorMessage }) : null;
+    const body = statusCode === 401 && errorMessage ? JSON.stringify({error: errorMessage}) : null;
     return new Response(body, {status: statusCode});
 }
 
@@ -214,6 +216,32 @@ interface routerInternalRoute {
     pattern: URLPattern;
     method: string;
     endpointFunction: EndpointFunction,
+}
+
+function getInboundUri(request: Request, headerNameUri: string): string {
+    try {
+        const xForwardedUri = request.headers.get(headerNameUri);
+        console.log(`xForwardedUri ${xForwardedUri}`)
+        if (xForwardedUri === null) {
+            throw new Error(`AUTH: ${headerNameUri} not found in headers`);
+        }
+        return xForwardedUri;
+    } catch (error) {
+        throw error;
+    }
+}
+
+function getInboundMethod(request: Request, headerNameMethod: string): string {
+    try {
+        const xForwardedMethod = request.headers.get(headerNameMethod);
+        console.log(`xForwardedMethod ${xForwardedMethod}`)
+        if (xForwardedMethod === null) {
+            throw new Error(`AUTH: ${headerNameMethod} not found in headers`);
+        }
+        return xForwardedMethod;
+    } catch (error) {
+        throw error;
+    }
 }
 
 class URLPatternRouter {
@@ -227,8 +255,7 @@ class URLPatternRouter {
     addRoute(
         method: string,
         routeURLPattern: string,
-        endpointFunction:
-            EndpointFunction,
+        endpointFunction: EndpointFunction,
     ) {
         this.routerInternalRoute.push(
             {pattern: new URLPattern({pathname: routeURLPattern}), method, endpointFunction}
@@ -237,9 +264,27 @@ class URLPatternRouter {
 
     async handleRequest(request: Request) {
         try {
+            let inboundMethod;
+            try {
+                inboundMethod = getInboundMethod(request, this.applicationOptions.headerNameMethod);
+            } catch (error) {
+                return makeResponse(401, this.applicationOptions, request, null, error.message);
+            }
+
+            let inboundUri;
+            try {
+                inboundUri = getInboundUri(request, this.applicationOptions.headerNameUri);
+            } catch (error) {
+                return makeResponse(401, this.applicationOptions, request, null, error.message);
+            }
+
             for (const routerInternalRoute of this.routerInternalRoute) {
-                const match = routerInternalRoute.pattern.exec(request.url);
-                if (request.method === routerInternalRoute.method && match) {
+                // this MEANT to be http://www.example.org yes even for your application
+                // it is a dummy base URL, as we are only interested in the pathname
+                const dummyBaseURL = "http://www.example.org"
+                const found = routerInternalRoute.pattern.test(inboundUri, dummyBaseURL);
+                const match = routerInternalRoute.pattern.exec(inboundUri, dummyBaseURL);
+                if (inboundMethod === routerInternalRoute.method && found) {
                     const result: { success: boolean; errorMessage?: string; } = await routerInternalRoute.endpointFunction(request, match);
                     if (result.success) {
                         return makeResponse(200, this.applicationOptions, request, routerInternalRoute.pattern.pathname);
@@ -281,7 +326,7 @@ function displayHelp() {
     console.log(`
       Server usage:
 
-      server --config-dir <config_directory> [--db-filename <database_path>] [--update-period <update_period_in_milliseconds>] [--disable-stats] [--version] [--help] [--port <port_number>] [--listen-address <listen_address>]
+      server --config-dir <config_directory> [--db-filename <database_path>] [--update-period <update_period_in_milliseconds>] [--disable-stats] [--version] [--help] [--port <port_number>] [--listen-address <listen_address>] [--header-name-uri <header_name>] [--header-name-method <header_name>]
 
       --config-dir: Path to the directory containing configuration files (default: .)
       --db-filename: Path to the SQLite database file (default: route_stats_counters.db)
@@ -292,6 +337,8 @@ function displayHelp() {
       --help: Show help message
       --port: Port number to listen on (default: 3000 or PORT environment variable). If both are set, the server will exit with an error.
       --listen-address: Address to listen on (default: 0.0.0.0 or LISTEN_ADDRESS environment variable). If both are set, the server will exit with an error.
+      --header-name-uri: Name of the header for URI (default: X-Forwarded-Uri)
+      --header-name-method: Name of the header for method (default: X-Forwarded-Method)
 
       **Configuration Files:**
 
@@ -314,6 +361,8 @@ interface ApplicationOptions {
     port: number;
     updatePeriod: number;
     verbose: boolean;
+    headerNameUri: string;
+    headerNameMethod: string;
 }
 
 function printApplicationOptions(options: ApplicationOptions) {
@@ -324,6 +373,8 @@ function printApplicationOptions(options: ApplicationOptions) {
     console.log(`port: ${options.port}`);
     console.log(`updatePeriod: ${options.updatePeriod}`);
     console.log(`verbose: ${options.verbose}`);
+    console.log(`headerNameUri: ${options.headerNameUri}`);
+    console.log(`headerNameMethod: ${options.headerNameMethod}`);
 }
 
 function parseArgs(args: string[]): ApplicationOptions {
@@ -335,6 +386,8 @@ function parseArgs(args: string[]): ApplicationOptions {
         port: 3000,
         updatePeriod: 10000,
         verbose: true,
+        headerNameUri: "X-Forwarded-Uri",
+        headerNameMethod: "X-Forwarded-Method",
     };
 
     function validatePort(port: string): number {
@@ -401,6 +454,24 @@ function parseArgs(args: string[]): ApplicationOptions {
                     i++;
                 } else {
                     console.error("Error: --listen-address option requires an address.");
+                    Deno.exit(1);
+                }
+                break;
+            case "--header-name-uri":
+                if (i + 1 < args.length) {
+                    applicationOptions.headerNameUri = args[i + 1];
+                    i++;
+                } else {
+                    console.error("Error: --header-name-uri option requires a header name.");
+                    Deno.exit(1);
+                }
+                break;
+            case "--header-name-method":
+                if (i + 1 < args.length) {
+                    applicationOptions.headerNameMethod = args[i + 1];
+                    i++;
+                } else {
+                    console.error("Error: --header-name-method option requires a header name.");
                     Deno.exit(1);
                 }
                 break;
