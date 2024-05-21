@@ -5,23 +5,33 @@
     "routeEndpointTypeScriptFile": "authFuncAnonymous.ts"
   },
   {
+    "method": "POST",
+    "routeURLPattern": "/api/v1/wave/newwave/:channel_id",
+    "routeEndpointTypeScriptFile": "authFuncSignedInUserMustBeAMemberOfTheChannel.ts"
+  },
+  {
+    "method": "POST",
+    "routeURLPattern": "/api/v1/uploadvideo/:channel_id/:wave_name?",
+    "routeEndpointTypeScriptFile": "authFuncSignedInUserMustBeAMemberOfTheChannel.ts"
+  },
+  {
     "method": "GET",
     "routeURLPattern": "/api/v1/channel/subscribercount/:username",
     "routeEndpointTypeScriptFile": "authFuncUsernameInURLMustMatchSignedInUser.ts"
   },
   {
     "method": "GET",
-    "routeURLPattern": "/api/v1/project/info/:username",
+    "routeURLPattern": "/api/v1/channel/info/:username",
     "routeEndpointTypeScriptFile": "authFuncUsernameInURLMustMatchSignedInUser.ts"
   },
   {
     "method": "GET",
-    "routeURLPattern": "/api/v1/user/settings/:username",
+    "routeURLPattern": "/api/v1/channel/waves/:username",
     "routeEndpointTypeScriptFile": "authFuncUsernameInURLMustMatchSignedInUser.ts"
   },
   {
     "method": "GET",
-    "routeURLPattern": "/api/v1/report/income/:username",
+    "routeURLPattern": "/api/v1/channel/issubscribed/:username",
     "routeEndpointTypeScriptFile": "authFuncUsernameInURLMustMatchSignedInUser.ts"
   }
 ]
