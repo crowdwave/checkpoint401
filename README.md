@@ -45,6 +45,30 @@ Instead of having auth code like spaghetti hairball gumball through your applica
 * You can provide additional TypeScript files beyond the endpoint functions for additional logic.
 * That is the entirety of Checkpoint 401.
 
+# Getting Started with Checkpoint 401
+
+## IMPORTANT INFORMATION BEFORE YOU START! 
+
+Pay particular attention to these two command line arguments:
+
+--header-name-uri
+--header-name-method
+
+**_To understand why they important, you must first understand that Nginx and Caddy (and presumably Traefik) will pass the URI and method of the inbound request to the forward auth server in headers.**_
+
+**_The exact headers they use differs between Nginx/Caddy/Traefik and is also configurable by you in your web server setup.**_
+
+So these define the headers that Checkpoint 401 will use to pass the URI and method of the inbound request to your endpoint function.
+
+## Steps you need to take to use Checkpoint 401 
+
+1: clone the repository
+2: install Deno
+3: create your routes.json file (or modify the example one in the repository)
+4: write your endpoint functions in TypeScript
+5: run the server, making sure to specify --header-name-uri and --header-name-method correctly for your web server setup.
+6: configure a systemd service file to run the server as a service (see the example provided) 
+
 ## Practical usage example
 
 Have a look at the files in the config directory of this repository for a practical example of how to use Checkpoint 401. 
