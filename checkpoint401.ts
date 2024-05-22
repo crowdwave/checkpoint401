@@ -218,10 +218,9 @@ interface routerInternalRoute {
     endpointFunction: EndpointFunction,
 }
 
-function getInboundUri(request: Request, headerNameUri: string): string {
+function getInboundUriFromHeaders(request: Request, headerNameUri: string): string {
     try {
         const xForwardedUri = request.headers.get(headerNameUri);
-        console.log(`xForwardedUri ${xForwardedUri}`)
         if (xForwardedUri === null) {
             throw new Error(`AUTH: ${headerNameUri} not found in headers`);
         }
@@ -231,10 +230,9 @@ function getInboundUri(request: Request, headerNameUri: string): string {
     }
 }
 
-function getInboundMethod(request: Request, headerNameMethod: string): string {
+function getInboundMethodFromHeaders(request: Request, headerNameMethod: string): string {
     try {
         const xForwardedMethod = request.headers.get(headerNameMethod);
-        console.log(`xForwardedMethod ${xForwardedMethod}`)
         if (xForwardedMethod === null) {
             throw new Error(`AUTH: ${headerNameMethod} not found in headers`);
         }
@@ -506,8 +504,8 @@ function patchMethodAndUriIntoRequest(request: Request, applicationOptions: Appl
     // This function is a workaround to patch the method and URL into the request object
     // because the web server sends us the method and url in headers
     try {
-        const method = getInboundMethod(request, applicationOptions.headerNameMethod);
-        const url = getInboundUri(request, applicationOptions.headerNameUri);
+        const method = getInboundMethodFromHeaders(request, applicationOptions.headerNameMethod);
+        const url = getInboundUriFromHeaders(request, applicationOptions.headerNameUri);
 
         const handler = {
             get: function(target: Request, prop: string) {
