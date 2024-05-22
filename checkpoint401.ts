@@ -1,6 +1,6 @@
 import {DB} from "https://deno.land/x/sqlite@v3.8/mod.ts";
 
-const VERSION: number = 3;
+const VERSION: number = 4;
 
 /*
 to run:
@@ -264,27 +264,14 @@ class URLPatternRouter {
 
     async handleRequest(request: Request) {
         try {
-            let inboundMethod;
-            try {
-                inboundMethod = getInboundMethod(request, this.applicationOptions.headerNameMethod);
-            } catch (error) {
-                return makeResponse(401, this.applicationOptions, request, null, error.message);
-            }
-
-            let inboundUri;
-            try {
-                inboundUri = getInboundUri(request, this.applicationOptions.headerNameUri);
-            } catch (error) {
-                return makeResponse(401, this.applicationOptions, request, null, error.message);
-            }
 
             for (const routerInternalRoute of this.routerInternalRoute) {
                 // this MEANT to be http://www.example.org yes even for your application
                 // it is a dummy base URL, as we are only interested in the pathname
                 const dummyBaseURL = "http://www.example.org"
-                const found = routerInternalRoute.pattern.test(inboundUri, dummyBaseURL);
-                const match = routerInternalRoute.pattern.exec(inboundUri, dummyBaseURL);
-                if (inboundMethod === routerInternalRoute.method && found) {
+                const found = routerInternalRoute.pattern.test(request.url, dummyBaseURL);
+                const match = routerInternalRoute.pattern.exec(request.url, dummyBaseURL);
+                if (request.method === routerInternalRoute.method && found) {
                     const result: { success: boolean; errorMessage?: string; } = await routerInternalRoute.endpointFunction(request, match);
                     if (result.success) {
                         return makeResponse(200, this.applicationOptions, request, routerInternalRoute.pattern.pathname);
@@ -515,6 +502,31 @@ function printVersion() {
     console.log(`checkpoint401 version ${VERSION}`);
 }
 
+function patchMethodAndUriIntoRequest(request: Request, applicationOptions: ApplicationOptions): Request {
+    // This function is a workaround to patch the method and URL into the request object
+    // because the web server sends us the method and url in headers
+    try {
+        const method = getInboundMethod(request, applicationOptions.headerNameMethod);
+        const url = getInboundUri(request, applicationOptions.headerNameUri);
+
+        const handler = {
+            get: function(target: Request, prop: string) {
+                if (prop === 'method') {
+                    return method;
+                }
+                if (prop === 'url') {
+                    return url;
+                }
+                return (target as any)[prop];
+            }
+        };
+
+        return new Proxy(request, handler);
+    } catch (error) {
+        throw new Error(`Error modifying request: ${error.message}`);
+    }
+}
+
 async function runServer(): Promise<void> {
     try {
         printVersion()
@@ -531,7 +543,10 @@ async function runServer(): Promise<void> {
         }
         Deno.addSignalListener("SIGTERM", shutdown);
         Deno.addSignalListener("SIGINT", shutdown);
-        Deno.serve({hostname: applicationOptions.hostname, port: applicationOptions.port}, (req) => router.handleRequest(req));
+        Deno.serve(
+            {hostname: applicationOptions.hostname, port: applicationOptions.port},
+            (req) => router.handleRequest(patchMethodAndUriIntoRequest(req, applicationOptions))
+        );
     } catch (error) {
         console.error("Server startup failed:", error.message);
         Deno.exit(1);
