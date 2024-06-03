@@ -258,7 +258,7 @@ Checkpoint 401 has several optional command-line arguments:
 - `--disable-stats`: Disable the stats feature.
 - `--version`: Display server version.
 - `--help`: Show help message.
-- `--port <port_number>`: Port number to listen on (default: 3000 or PORT environment variable).
+- `--port <port_number>`: Port number to listen on (default: 4401 or PORT environment variable).
 - `--listen-address <listen_address>`: Address to listen on (default: 0.0.0.0 or LISTEN_ADDRESS environment variable).
 - `--header-name-uri <header_name>`: The name of the header that contains the URI of the inbound request (default: X-Original-URI).
 - `--header-name-method <header_name>`: The name of the header that contains the method of the inbound request (default: X-Original-Method).

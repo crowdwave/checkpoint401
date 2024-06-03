@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Replace with your server's address
-SERVER_URL="http://localhost:3000"
+SERVER_URL="http://localhost:4401"
 
 # Test getUsers endpoint
 echo "Testing getUsers endpoint..."

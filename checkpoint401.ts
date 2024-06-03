@@ -320,7 +320,7 @@ function displayHelp() {
       --verbose: Enable verbose logging
       --version: Display server version
       --help: Show help message
-      --port: Port number to listen on (default: 3000 or PORT environment variable). If both are set, the server will exit with an error.
+      --port: Port number to listen on (default: 4401 or PORT environment variable). If both are set, the server will exit with an error.
       --listen-address: Address to listen on (default: 0.0.0.0 or LISTEN_ADDRESS environment variable). If both are set, the server will exit with an error.
       --header-name-uri: Name of the header for URI (default: X-Forwarded-Uri)
       --header-name-method: Name of the header for method (default: X-Forwarded-Method)
@@ -368,7 +368,7 @@ function parseArgs(args: string[]): ApplicationOptions {
         currentWorkingDir: Deno.cwd(),
         disableStats: false,
         hostname: `127.0.0.1`,
-        port: 3000,
+        port: 4401,
         updatePeriod: 10000,
         verbose: true,
         headerNameUri: "X-Forwarded-Uri",
@@ -472,7 +472,7 @@ function parseArgs(args: string[]): ApplicationOptions {
 
     // Check if both command-line argument and environment variable are set for port
     const envPort = Deno.env.get("PORT");
-    if (applicationOptions.port !== 3000 && envPort) {
+    if (applicationOptions.port !== 4401 && envPort) {
         console.error("Error: Both command-line argument and environment variable are set for port.");
         Deno.exit(1);
     }
