@@ -306,7 +306,7 @@ class URLPatternRouter {
         try {
 
             for (const routerInternalRoute of this.routerInternalRoute) {
-                // this MEANT to be http://www.example.org yes even for your application
+                // this is MEANT to be http://www.example.org yes even for your application
                 // it is a dummy base URL, as we are only interested in the pathname
                 const dummyBaseURL = "http://www.example.org"
                 const found = routerInternalRoute.pattern.test(request.url, dummyBaseURL);
