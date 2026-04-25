@@ -3,3 +3,17 @@
 # Covers JetBrains IDEs: IntelliJ, RubyMine, PhpStorm, AppCode, PyCharm, CLion, Android Studio and WebStorm
 # Reference: https://intellij-support.jetbrains.com/hc/en-us/articles/206544839
 
+# Secrets - the example endpoints in config/ load JWT_SECRET / DATABASE_URL
+# from a local .env file. Never commit it.
+.env
+.env.*
+
+# SQLite stats database written at runtime by checkpoint401's stats feature.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# OS noise.
+.DS_Store
+Thumbs.db
