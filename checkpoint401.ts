@@ -440,8 +440,13 @@ function parseArgs(args: string[]): ApplicationOptions {
 
     function validateUpdatePeriod(period: string): number {
         const parsedPeriod = Number(period);
-        if (isNaN(parsedPeriod) || parsedPeriod < 1000) {
-            console.error("Error: --update-period option requires a number greater than or equal to 1000.");
+        // setTimeout uses an int32 internally; values above 2^31 - 1
+        // ms (~24.8 days) silently degrade to 1ms and the periodic
+        // flush hot-loops. Cap below that. isNaN() also misses
+        // Infinity, so use Number.isFinite explicitly.
+        const MAX_UPDATE_PERIOD_MS = 2 ** 31 - 1;
+        if (!Number.isFinite(parsedPeriod) || parsedPeriod < 1000 || parsedPeriod > MAX_UPDATE_PERIOD_MS) {
+            console.error(`Error: --update-period option requires a finite number between 1000 and ${MAX_UPDATE_PERIOD_MS} (about 24 days).`);
             Deno.exit(1);
         }
         return parsedPeriod;
