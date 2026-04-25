@@ -184,12 +184,22 @@ async function updateDatabasePeriodically(
         throw new Error('Invalid updatePeriod argument. It must be a positive number.');
     }
     try {
-        await dbManager.updateDatabase(routes);
-        // Reset the counters
+        // Snapshot then clear before writing, so any increments that
+        // land while the write is in flight are preserved for the next
+        // flush rather than zeroed. Today the sqlite query is sync so
+        // this can't happen, but the function is async and would race
+        // if query ever became awaited.
+        const snapshot = routes.map(route => ({
+            method: route.method,
+            routeURLPattern: route.routeURLPattern,
+            passCount: route.passCount ?? 0,
+            failCount: route.failCount ?? 0,
+        })) as RouteItem[];
         for (const route of routes) {
             route.passCount = 0;
             route.failCount = 0;
         }
+        await dbManager.updateDatabase(snapshot);
     } catch (error) {
         console.error('Error updating database:', error);
     } finally {
