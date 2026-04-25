@@ -259,8 +259,8 @@ Checkpoint 401 has several optional command-line arguments:
 - `--help`: Show help message.
 - `--port <port_number>`: Port number to listen on (default: 3000 or PORT environment variable).
 - `--listen-address <listen_address>`: Address to listen on (default: 127.0.0.1 or LISTEN_ADDRESS environment variable). Bind to 0.0.0.0 only if you have a network ACL or shared-secret in front; the server treats inbound headers as trusted.
-- `--header-name-uri <header_name>`: The name of the header that contains the URI of the inbound request (default: X-Original-URI).
-- `--header-name-method <header_name>`: The name of the header that contains the method of the inbound request (default: X-Original-Method).
+- `--header-name-uri <header_name>`: The name of the header that contains the URI of the inbound request (default: X-Forwarded-Uri).
+- `--header-name-method <header_name>`: The name of the header that contains the method of the inbound request (default: X-Forwarded-Method).
 
 The `--header-name-uri` and `--header-name-method` arguments are particularly important as they define the headers that Checkpoint 401 will use to pass the URI and method of the inbound request to your endpoint function. The exact headers used can differ between Nginx/Caddy/Traefik and are also configurable by you in your web server setup.
 
@@ -329,11 +329,14 @@ This concludes the full document for Checkpoint 401 Forward Auth Server.
             internal;  # This location should not be accessed directly by clients
             proxy_pass http://auth_service;  # The authentication service
     
-            # Pass the necessary headers to the authentication service
-            proxy_set_header X-Original-URI $request_uri;
-            proxy_set_header X-Original-Method $request_method;
-            proxy_set_header X-Original-Host $host;
-            proxy_set_header X-Original-IP $remote_addr;
+            # Pass the necessary headers to the authentication service.
+            # The header names below match the Checkpoint 401 defaults
+            # (--header-name-uri / --header-name-method). If you change
+            # those flags, change these names to match.
+            proxy_set_header X-Forwarded-Uri $request_uri;
+            proxy_set_header X-Forwarded-Method $request_method;
+            proxy_set_header X-Forwarded-Host $host;
+            proxy_set_header X-Forwarded-For $remote_addr;
         }
     
         # Define the error handler locations
