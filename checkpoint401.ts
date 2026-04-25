@@ -335,7 +335,7 @@ function createEndpointFunctionProxy(fn: Function, routeConfig: RouteItem, appli
                 const result = await target(...argumentsList);
                 if (typeof result !== "object" || typeof result.success !== "boolean" || (result.errorMessage && typeof result.errorMessage !== "string")) {
                     routeConfig.failCount = (routeConfig.failCount || 0) + 1; // Increment fail count
-                    throw new Error(`[${new Date().toISOString()}] YOUR TYPESCRIPT ENDPOINT FUNCTION DID NOT RETURN AN OBJECT WITH A BOOLEAN 'success' PROPERTY AND AN OPTIONAL 'errorMessage' STRING PROPERTY! Method: ${routeConfig.method}, Route: ${routeConfig.routeURLPattern}, Function: ${routeConfig.routeURLPattern}`);
+                    throw new Error(`[${new Date().toISOString()}] YOUR TYPESCRIPT ENDPOINT FUNCTION DID NOT RETURN AN OBJECT WITH A BOOLEAN 'success' PROPERTY AND AN OPTIONAL 'errorMessage' STRING PROPERTY! Method: ${routeConfig.method}, Route: ${routeConfig.routeURLPattern}, File: ${routeConfig.routeEndpointTypeScriptFile}`);
                 }
                 // Update the stats
                 result.success ? (routeConfig.passCount = (routeConfig.passCount || 0) + 1) : (routeConfig.failCount = (routeConfig.failCount || 0) + 1);
