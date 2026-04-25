@@ -149,7 +149,7 @@ async function loadAdditionalTsFiles(applicationOptions: ApplicationOptions): Pr
 async function setupRoutes(
     applicationOptions: ApplicationOptions,
     dbManager: DatabaseManager,
-): Promise<URLPatternRouter> {
+): Promise<{ router: URLPatternRouter; routeItems: RouteItem[] }> {
     try {
         const routesJson = await Deno.readTextFile(`${applicationOptions.currentWorkingDir}/routes.json`);
         const parsed: unknown = JSON.parse(routesJson);
@@ -209,7 +209,7 @@ async function setupRoutes(
         }
         await dbManager.insertInitialStats(routeItems);
         if (!applicationOptions.disableStats) updateDatabasePeriodically(dbManager, routeItems, applicationOptions);
-        return urlPatternRouter;
+        return { router: urlPatternRouter, routeItems };
     } catch (error) {
         // Re-throw with a context-prefixed message; runServer's catch
         // is the single layer that logs the failure to stderr, which
@@ -709,26 +709,58 @@ async function runServer(): Promise<void> {
         printApplicationOptions(applicationOptions);
         const dbManager = new DatabaseManager(applicationOptions.dbFilename);
         await dbManager.createTableIfNotExists();
-        const router = await setupRoutes(applicationOptions, dbManager);
+        const { router, routeItems } = await setupRoutes(applicationOptions, dbManager);
         await loadAdditionalTsFiles(applicationOptions);
-        const shutdown = () => {
-            dbManager.close();
+
+        const server = Deno.serve(
+            {hostname: applicationOptions.hostname, port: applicationOptions.port},
+            (req) => router.handleRequest(patchMethodAndUriIntoRequest(req, applicationOptions))
+        );
+
+        // Graceful shutdown: stop accepting new requests, wait for
+        // in-flight handlers to finish, flush any unflushed counters
+        // so the periodic-flush gap doesn't lose them across restarts,
+        // then close the DB. shuttingDown guards against re-entry if
+        // both SIGTERM and SIGINT arrive in quick succession.
+        let shuttingDown = false;
+        const shutdown = async () => {
+            if (shuttingDown) return;
+            shuttingDown = true;
+            try {
+                await server.shutdown();
+            } catch (error) {
+                console.error("Error draining server:", error.message);
+            }
+            if (!applicationOptions.disableStats) {
+                try {
+                    const snapshot = routeItems.map(route => ({
+                        method: route.method,
+                        routeURLPattern: route.routeURLPattern,
+                        passCount: route.passCount ?? 0,
+                        failCount: route.failCount ?? 0,
+                    })) as RouteItem[];
+                    await dbManager.updateDatabase(snapshot);
+                } catch (error) {
+                    console.error("Error flushing counters on shutdown:", error.message);
+                }
+            }
+            try {
+                dbManager.close();
+            } catch (error) {
+                console.error("Error closing DB:", error.message);
+            }
             Deno.exit();
-        }
+        };
         // SIGTERM is not supported on Windows; SIGINT is. Register
         // each one independently so a missing signal doesn't prevent
         // the others from being installed.
         for (const signal of ["SIGTERM", "SIGINT"] as const) {
             try {
-                Deno.addSignalListener(signal, shutdown);
+                Deno.addSignalListener(signal, () => { shutdown(); });
             } catch (error) {
                 console.warn(`Could not install ${signal} handler: ${error.message}`);
             }
         }
-        Deno.serve(
-            {hostname: applicationOptions.hostname, port: applicationOptions.port},
-            (req) => router.handleRequest(patchMethodAndUriIntoRequest(req, applicationOptions))
-        );
     } catch (error) {
         console.error("Server startup failed:", error.message);
         Deno.exit(1);
