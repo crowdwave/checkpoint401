@@ -4,7 +4,12 @@ const VERSION: number = 4;
 
 /*
 to run:
-deno run --allow-net --allow-read --allow-write checkpoint401.ts --db-filename my_database.db
+deno run \
+  --allow-net=127.0.0.1:3000 \
+  --allow-read=. \
+  --allow-env=PORT,LISTEN_ADDRESS \
+  --allow-write=route_stats_counters.db \
+  checkpoint401.ts --db-filename my_database.db
 
 to compile:
 deno compile checkpoint401.ts
@@ -12,18 +17,8 @@ deno compile checkpoint401.ts
 to run:
 ./checkpoint401
 
-Optional Arguments:
-The provided code supports command-line arguments for configuration. You can pass these arguments when running the binary:
-    --config-dir <config-dir>: Path to the directory containing configuration files (default: .)
-    --db-filename <database_path>: Path to the SQLite database file (default: route_stats_counters.db)
-    --update-period <update_period_in_milliseconds>: Period in milliseconds to update the database and write counters to disk (default: 10000)
-    --disable-stats: Disable the stats feature
-    --header-name-uri <header_name>: Name of the header for URI (default: X-Forwarded-Uri)
-    --header-name-method <header_name>: Name of the header for method (default: X-Forwarded-Method)
-    --version: Display server version
-    --help: Show help message
-
-./checkpoint401 --dir custom_config --disable-stats
+Run with --help for the full list of flags. The set is also documented
+in displayHelp() below; both must be kept in sync with parseArgs().
  */
 
 type EndpointFunction = (req: Request, match: URLPatternResult | null) => Promise<{ success: boolean; errorMessage?: string; }>;
@@ -441,12 +436,12 @@ function displayHelp() {
 
       - routes.json: This file defines the routes for the server. It should be a JSON array with each object containing the following properties:
           - method: HTTP method (GET, POST, etc.)
-          - route: The route path for the request
-          - file: The filename of the TypeScript endpoint handler located in the "endpoints" directory
+          - routeURLPattern: A URL Pattern API pathname pattern (https://developer.mozilla.org/en-US/docs/Web/API/URLPattern)
+          - routeEndpointTypeScriptFile: Flat filename (no '/' or '..') of the TypeScript endpoint handler in the config/ directory next to checkpoint401.ts.
 
-      - auth/<function_name>.ts: These files define the authentication logic. Each file should export a default function that takes a Request object as input and returns a Promise that resolves to true if the request is authorized, false otherwise.
-
-      - endpoints/<file_name>.ts: These files define the endpoint handlers for specific routes. Each file should export a default function that takes a Request object as input and returns a Response object or a value that will be converted to a Response.
+      - config/<file_name>.ts: Each endpoint TypeScript file must export a default async function with signature:
+          (req: Request, match: URLPatternResult | null) => Promise<{ success: boolean; errorMessage?: string }>
+        Any other .ts file in the config directory is also imported on startup so endpoints can share helpers.
   `);
 }
 
