@@ -652,7 +652,13 @@ function printVersion() {
 function validateInboundUri(uri: string): void {
     // Cheap structural checks against the value the proxy passed in via
     // X-Forwarded-Uri. This catches:
-    //   - header-injection bytes (CR/LF/NUL)
+    //   - header-injection bytes (CR/LF/NUL) in raw form OR percent-
+    //     encoded form. URLPattern URL-decodes path segments before
+    //     binding them to named match groups, so an attacker who can
+    //     reach the auth port can smuggle CR/LF into a match group
+    //     (and from there into log lines and error messages) by
+    //     encoding it as %0A / %0D / %00 even when the raw header
+    //     value passes the basic check.
     //   - absolute URLs that would let an attacker steer URLPattern
     //     onto a different host's pathname semantics
     //   - non-path values that are obviously not what the proxy meant
@@ -662,6 +668,9 @@ function validateInboundUri(uri: string): void {
     }
     if (/[\r\n\0]/.test(uri)) {
         throw new Error("AUTH: inbound URI contains CR/LF/NUL");
+    }
+    if (/%0[0adAD]/.test(uri)) {
+        throw new Error("AUTH: inbound URI contains percent-encoded CR/LF/NUL");
     }
     if (!uri.startsWith("/")) {
         throw new Error("AUTH: inbound URI must start with '/'");
