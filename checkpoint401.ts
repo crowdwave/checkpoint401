@@ -142,6 +142,9 @@ async function setupRoutes(
         if (!Array.isArray(parsed)) {
             throw new Error("routes.json must be a JSON array of route objects.");
         }
+        if (parsed.length === 0) {
+            console.warn("WARNING: routes.json is empty. Every request will receive 404 (deny). Add at least one route to enable the server.");
+        }
         let routeItems: RouteItem[] = parsed.map((entry, index) => {
             if (entry === null || typeof entry !== "object") {
                 throw new Error(`routes.json entry at index ${index} must be an object.`);
