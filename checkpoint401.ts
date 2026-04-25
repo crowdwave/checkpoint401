@@ -515,7 +515,12 @@ function patchMethodAndUriIntoRequest(request: Request, applicationOptions: Appl
                 if (prop === 'url') {
                     return url;
                 }
-                return (target as any)[prop];
+                const value = (target as any)[prop];
+                // Native Request methods (json, text, arrayBuffer, clone,
+                // formData, blob) check internal slots on `this`. If we
+                // return the function unbound, calling it on the proxy
+                // throws TypeError, so endpoints that read the body fail.
+                return typeof value === 'function' ? value.bind(target) : value;
             }
         };
 
