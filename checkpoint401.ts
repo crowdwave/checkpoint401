@@ -179,16 +179,14 @@ async function setupRoutes(
             }
             const filePath = `./config/${endpointFileName}`;
             try {
-                console.log(`Importing ${filePath} .....`);
                 const endpointModule = await import(filePath);
                 if (!endpointModule.default) {
                     throw new Error(`The file '${filePath}' does not export a valid default handler.`);
                 }
                 const endpointFunctionProxy = createEndpointFunctionProxy(endpointModule.default, routeConfig, applicationOptions) as EndpointFunction;
                 urlPatternRouter.addRoute(routeConfig.method, routeConfig.routeURLPattern, endpointFunctionProxy);
-                console.log(`Route ${routeConfig.method} ${routeConfig.routeURLPattern} loaded successfully, endpoint is: ${filePath}`);
+                console.log(`Loaded route ${routeConfig.method} ${routeConfig.routeURLPattern} -> ${filePath}`);
             } catch (error) {
-                console.trace(`Error importing endpoint '${filePath}': ${error.message}`);
                 throw new Error(`Error importing endpoint '${filePath}': ${error.message}`);
             }
         }
