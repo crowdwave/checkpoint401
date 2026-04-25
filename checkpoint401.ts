@@ -677,8 +677,16 @@ async function runServer(): Promise<void> {
             dbManager.close();
             Deno.exit();
         }
-        Deno.addSignalListener("SIGTERM", shutdown);
-        Deno.addSignalListener("SIGINT", shutdown);
+        // SIGTERM is not supported on Windows; SIGINT is. Register
+        // each one independently so a missing signal doesn't prevent
+        // the others from being installed.
+        for (const signal of ["SIGTERM", "SIGINT"] as const) {
+            try {
+                Deno.addSignalListener(signal, shutdown);
+            } catch (error) {
+                console.warn(`Could not install ${signal} handler: ${error.message}`);
+            }
+        }
         Deno.serve(
             {hostname: applicationOptions.hostname, port: applicationOptions.port},
             (req) => router.handleRequest(patchMethodAndUriIntoRequest(req, applicationOptions))
