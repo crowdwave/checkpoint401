@@ -13,7 +13,7 @@ export async function checkCookieIsValidReturningUserId(req: Request): Promise<s
         if (!env.JWT_SECRET) throw new JwtSecretNotSetError();
         const cookies: string | null = req.headers.get("Cookie");
         if (!cookies) throw new NoCookiesFoundError();
-        const jwtCookie = cookies.split("; ").find((c) => c.startsWith("token="));
+        const jwtCookie = cookies.split(/;\s*/).find((c) => c.startsWith("token="));
         if (!jwtCookie) throw new MissingJwtTokenError();
         const token = jwtCookie.split("=")[1];
         const decoded = await verify(token, env.JWT_SECRET, "HS256") as unknown as DecodedToken;
