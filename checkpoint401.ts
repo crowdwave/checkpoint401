@@ -146,7 +146,18 @@ async function setupRoutes(
         }));
         const urlPatternRouter: URLPatternRouter = new URLPatternRouter(applicationOptions)
         for (const routeConfig of routeItems) {
-            const filePath = `./config/${routeConfig.routeEndpointTypeScriptFile}`;
+            const endpointFileName = routeConfig.routeEndpointTypeScriptFile;
+            // routes.json supplies a flat filename. Reject anything that
+            // could escape the config directory or look like an absolute
+            // path - if routes.json is ever attacker-controlled, this
+            // turns "import the auth function" into "import any .ts on
+            // disk".
+            if (typeof endpointFileName !== "string" || endpointFileName.length === 0
+                || endpointFileName.includes("/") || endpointFileName.includes("\\")
+                || endpointFileName.includes("..") || endpointFileName.includes("\0")) {
+                throw new Error(`Invalid routeEndpointTypeScriptFile '${endpointFileName}': must be a flat filename in the config directory.`);
+            }
+            const filePath = `./config/${endpointFileName}`;
             try {
                 console.log(`Importing ${filePath} .....`);
                 const endpointModule = await import(filePath);
