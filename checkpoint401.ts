@@ -229,7 +229,8 @@ const makeResponse = (
     if (applicationOptions.verbose) {
         console.log(`[${new Date().toISOString()}] status: ${statusCode} method: ${request.method} pattern: ${URLPatternPathname} request.url: ${request.url}`);
     }
-    const body = statusCode === 401 && errorMessage ? JSON.stringify({error: errorMessage}) : null;
+    const includeBody = statusCode === 401 && errorMessage && !applicationOptions.suppressErrorBody;
+    const body = includeBody ? JSON.stringify({error: errorMessage}) : null;
     return new Response(body, {status: statusCode});
 }
 
@@ -347,6 +348,7 @@ function displayHelp() {
       --header-name-uri: Name of the header for URI (default: X-Forwarded-Uri)
       --header-name-method: Name of the header for method (default: X-Forwarded-Method)
       --strict-uri: Reject inbound X-Forwarded-Uri values that are not '/'-prefixed paths or contain CR/LF/NUL bytes. Off by default for compatibility; recommended for new deployments.
+      --no-error-body: Do not include the endpoint's errorMessage in 401 response bodies. Off by default. Recommended if your reverse proxy forwards the auth response body to clients or error pages, since distinct error strings can enable user enumeration.
 
       **Configuration Files:**
 
@@ -372,6 +374,7 @@ interface ApplicationOptions {
     headerNameUri: string;
     headerNameMethod: string;
     strictUri: boolean;
+    suppressErrorBody: boolean;
 }
 
 function printApplicationOptions(options: ApplicationOptions) {
@@ -385,6 +388,7 @@ function printApplicationOptions(options: ApplicationOptions) {
     console.log(`headerNameUri: ${options.headerNameUri}`);
     console.log(`headerNameMethod: ${options.headerNameMethod}`);
     console.log(`strictUri: ${options.strictUri}`);
+    console.log(`suppressErrorBody: ${options.suppressErrorBody}`);
 }
 
 function parseArgs(args: string[]): ApplicationOptions {
@@ -399,6 +403,7 @@ function parseArgs(args: string[]): ApplicationOptions {
         headerNameUri: "X-Forwarded-Uri",
         headerNameMethod: "X-Forwarded-Method",
         strictUri: false,
+        suppressErrorBody: false,
     };
 
     function validatePort(port: string): number {
@@ -434,6 +439,9 @@ function parseArgs(args: string[]): ApplicationOptions {
                 break;
             case "--strict-uri":
                 applicationOptions.strictUri = true;
+                break;
+            case "--no-error-body":
+                applicationOptions.suppressErrorBody = true;
                 break;
             case "--db-filename":
                 if (i + 1 < args.length) {
