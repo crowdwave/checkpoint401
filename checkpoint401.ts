@@ -444,6 +444,9 @@ function parseArgs(args: string[]): ApplicationOptions {
         return parsedPeriod;
     }
 
+    let portFromCli = false;
+    let hostnameFromCli = false;
+
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         switch (arg) {
@@ -487,6 +490,7 @@ function parseArgs(args: string[]): ApplicationOptions {
             case "--port":
                 if (i + 1 < args.length) {
                     applicationOptions.port = validatePort(args[i + 1]);
+                    portFromCli = true;
                     i++;
                 } else {
                     console.error("Error: --port option requires a number.");
@@ -496,6 +500,7 @@ function parseArgs(args: string[]): ApplicationOptions {
             case "--listen-address":
                 if (i + 1 < args.length) {
                     applicationOptions.hostname = args[i + 1];
+                    hostnameFromCli = true;
                     i++;
                 } else {
                     console.error("Error: --listen-address option requires an address.");
@@ -539,25 +544,28 @@ function parseArgs(args: string[]): ApplicationOptions {
         }
     }
 
-    // Check if both command-line argument and environment variable are set for port
+    // Track whether the CLI explicitly set port/hostname rather than
+    // comparing against the default sentinel - otherwise passing
+    // --port 3000 (or --listen-address 127.0.0.1) alongside the env
+    // var was indistinguishable from "not set on CLI" and the conflict
+    // check silently skipped.
     const envPort = Deno.env.get("PORT");
-    if (applicationOptions.port !== 3000 && envPort) {
+    if (portFromCli && envPort) {
         console.error("Error: Both command-line argument and environment variable are set for port.");
         Deno.exit(1);
     }
 
-    // Check if both command-line argument and environment variable are set for listen address
     const envhostname = Deno.env.get("LISTEN_ADDRESS");
-    if (applicationOptions.hostname !== "127.0.0.1" && envhostname) {
+    if (hostnameFromCli && envhostname) {
         console.error("Error: Both command-line argument and environment variable are set for listen address.");
         Deno.exit(1);
     }
 
     // If only environment variables are set, apply them
-    if (!args.includes("--port") && envPort) {
+    if (!portFromCli && envPort) {
         applicationOptions.port = validatePort(envPort);
     }
-    if (!args.includes("--listen-address") && envhostname) {
+    if (!hostnameFromCli && envhostname) {
         applicationOptions.hostname = envhostname;
     }
 
