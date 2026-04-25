@@ -375,7 +375,26 @@ function createEndpointFunctionProxy(fn: Function, routeConfig: RouteItem, appli
     return new Proxy(fn, {
         async apply(target, thisArg, argumentsList) {
             try {
-                const result = await target(...argumentsList);
+                let result;
+                if (applicationOptions.endpointTimeoutMs > 0) {
+                    // Race the endpoint against a timeout so a hung
+                    // handler can't tie up a request slot indefinitely.
+                    // Fail-closed: timeout becomes a denied auth.
+                    let timeoutId: number | undefined;
+                    const timeoutPromise = new Promise((_, reject) => {
+                        timeoutId = setTimeout(
+                            () => reject(new Error(`Endpoint timed out after ${applicationOptions.endpointTimeoutMs}ms`)),
+                            applicationOptions.endpointTimeoutMs,
+                        );
+                    });
+                    try {
+                        result = await Promise.race([target(...argumentsList), timeoutPromise]);
+                    } finally {
+                        if (timeoutId !== undefined) clearTimeout(timeoutId);
+                    }
+                } else {
+                    result = await target(...argumentsList);
+                }
                 if (typeof result !== "object" || typeof result.success !== "boolean" || (result.errorMessage && typeof result.errorMessage !== "string")) {
                     routeConfig.failCount = (routeConfig.failCount || 0) + 1; // Increment fail count
                     throw new Error(`[${new Date().toISOString()}] YOUR TYPESCRIPT ENDPOINT FUNCTION DID NOT RETURN AN OBJECT WITH A BOOLEAN 'success' PROPERTY AND AN OPTIONAL 'errorMessage' STRING PROPERTY! Method: ${routeConfig.method}, Route: ${routeConfig.routeURLPattern}, File: ${routeConfig.routeEndpointTypeScriptFile}`);
@@ -411,6 +430,7 @@ function displayHelp() {
       --header-name-method: Name of the header for method (default: X-Forwarded-Method)
       --strict-uri: Reject inbound X-Forwarded-Uri values that are not '/'-prefixed paths or contain CR/LF/NUL bytes. Off by default for compatibility; recommended for new deployments.
       --no-error-body: Do not include the endpoint's errorMessage in 401 response bodies. Off by default. Recommended if your reverse proxy forwards the auth response body to clients or error pages, since distinct error strings can enable user enumeration.
+      --endpoint-timeout-ms: Maximum time (ms) an endpoint function may run before the request is failed-closed (returned as 401). Set to 0 (default) to disable. Recommended for new deployments to prevent slow endpoints from tying up request slots indefinitely.
 
       **Configuration Files:**
 
@@ -437,6 +457,7 @@ interface ApplicationOptions {
     headerNameMethod: string;
     strictUri: boolean;
     suppressErrorBody: boolean;
+    endpointTimeoutMs: number; // 0 disables the timeout (default).
 }
 
 function printApplicationOptions(options: ApplicationOptions) {
@@ -451,6 +472,7 @@ function printApplicationOptions(options: ApplicationOptions) {
     console.log(`headerNameMethod: ${options.headerNameMethod}`);
     console.log(`strictUri: ${options.strictUri}`);
     console.log(`suppressErrorBody: ${options.suppressErrorBody}`);
+    console.log(`endpointTimeoutMs: ${options.endpointTimeoutMs}`);
 }
 
 function parseArgs(args: string[]): ApplicationOptions {
@@ -466,6 +488,7 @@ function parseArgs(args: string[]): ApplicationOptions {
         headerNameMethod: "X-Forwarded-Method",
         strictUri: false,
         suppressErrorBody: false,
+        endpointTimeoutMs: 0,
     };
 
     function validatePort(port: string): number {
@@ -524,6 +547,20 @@ function parseArgs(args: string[]): ApplicationOptions {
                 break;
             case "--no-error-body":
                 applicationOptions.suppressErrorBody = true;
+                break;
+            case "--endpoint-timeout-ms":
+                if (i + 1 < args.length) {
+                    const parsed = Number(args[i + 1]);
+                    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 2 ** 31 - 1) {
+                        console.error("Error: --endpoint-timeout-ms requires a finite non-negative integer (0 disables, max ~24 days).");
+                        Deno.exit(1);
+                    }
+                    applicationOptions.endpointTimeoutMs = Math.floor(parsed);
+                    i++;
+                } else {
+                    console.error("Error: --endpoint-timeout-ms requires a number of milliseconds.");
+                    Deno.exit(1);
+                }
                 break;
             case "--db-filename":
                 if (i + 1 < args.length) {
