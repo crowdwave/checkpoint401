@@ -138,12 +138,32 @@ async function setupRoutes(
 ): Promise<URLPatternRouter> {
     try {
         const routesJson = await Deno.readTextFile(`${applicationOptions.currentWorkingDir}/routes.json`);
-        let routeItems: RouteItem[] = JSON.parse(routesJson);
-        routeItems = routeItems.map(route => ({
-            ...route,
-            passCount: 0,
-            failCount: 0,
-        }));
+        const parsed: unknown = JSON.parse(routesJson);
+        if (!Array.isArray(parsed)) {
+            throw new Error("routes.json must be a JSON array of route objects.");
+        }
+        let routeItems: RouteItem[] = parsed.map((entry, index) => {
+            if (entry === null || typeof entry !== "object") {
+                throw new Error(`routes.json entry at index ${index} must be an object.`);
+            }
+            const e = entry as Record<string, unknown>;
+            if (typeof e.method !== "string" || e.method.length === 0) {
+                throw new Error(`routes.json entry at index ${index} is missing required string field 'method'.`);
+            }
+            if (typeof e.routeURLPattern !== "string" || e.routeURLPattern.length === 0) {
+                throw new Error(`routes.json entry at index ${index} is missing required string field 'routeURLPattern'.`);
+            }
+            if (typeof e.routeEndpointTypeScriptFile !== "string" || e.routeEndpointTypeScriptFile.length === 0) {
+                throw new Error(`routes.json entry at index ${index} is missing required string field 'routeEndpointTypeScriptFile'.`);
+            }
+            return {
+                method: e.method,
+                routeURLPattern: e.routeURLPattern,
+                routeEndpointTypeScriptFile: e.routeEndpointTypeScriptFile,
+                passCount: 0,
+                failCount: 0,
+            };
+        });
         const urlPatternRouter: URLPatternRouter = new URLPatternRouter(applicationOptions)
         for (const routeConfig of routeItems) {
             const endpointFileName = routeConfig.routeEndpointTypeScriptFile;
