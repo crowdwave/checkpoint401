@@ -104,7 +104,7 @@ async function loadAdditionalTsFiles(applicationOptions: ApplicationOptions): Pr
     try {
         const routesJson = await Deno.readTextFile(`${applicationOptions.currentWorkingDir}/routes.json`);
         const routes = JSON.parse(routesJson);
-        const excludeFiles = new Set(routes.map((route: { file: string }) => route.file));
+        const excludeFiles = new Set(routes.map((route: { routeEndpointTypeScriptFile: string }) => route.routeEndpointTypeScriptFile));
 
         const directory = await Deno.readDir(applicationOptions.currentWorkingDir);
         console.log(`Importing non-router TypeScript files from ${applicationOptions.currentWorkingDir}`);
