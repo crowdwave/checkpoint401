@@ -253,7 +253,7 @@ const makeResponse = (
     return new Response(body, {status: statusCode});
 }
 
-interface routerInternalRoute {
+interface RouteEntry {
     pattern: URLPattern;
     method: string;
     endpointFunction: EndpointFunction,
@@ -276,7 +276,7 @@ function getInboundMethodFromHeaders(request: Request, headerNameMethod: string)
 }
 
 class URLPatternRouter {
-    private routerInternalRoute: routerInternalRoute[] = [];
+    private routes: RouteEntry[] = [];
     private applicationOptions: ApplicationOptions;
 
     constructor(applicationOptions: ApplicationOptions) {
@@ -288,7 +288,7 @@ class URLPatternRouter {
         routeURLPattern: string,
         endpointFunction: EndpointFunction,
     ) {
-        this.routerInternalRoute.push(
+        this.routes.push(
             {pattern: new URLPattern({pathname: routeURLPattern}), method: method.toUpperCase(), endpointFunction}
         );
     }
@@ -296,18 +296,18 @@ class URLPatternRouter {
     async handleRequest(request: Request) {
         try {
 
-            for (const routerInternalRoute of this.routerInternalRoute) {
+            for (const route of this.routes) {
                 // this is MEANT to be http://www.example.org yes even for your application
                 // it is a dummy base URL, as we are only interested in the pathname
                 const dummyBaseURL = "http://www.example.org"
-                const found = routerInternalRoute.pattern.test(request.url, dummyBaseURL);
-                const match = routerInternalRoute.pattern.exec(request.url, dummyBaseURL);
-                if (request.method.toUpperCase() === routerInternalRoute.method && found) {
-                    const result: Awaited<ReturnType<EndpointFunction>> = await routerInternalRoute.endpointFunction(request, match);
+                const found = route.pattern.test(request.url, dummyBaseURL);
+                const match = route.pattern.exec(request.url, dummyBaseURL);
+                if (request.method.toUpperCase() === route.method && found) {
+                    const result: Awaited<ReturnType<EndpointFunction>> = await route.endpointFunction(request, match);
                     if (result.success) {
-                        return makeResponse(200, this.applicationOptions, request, routerInternalRoute.pattern.pathname);
+                        return makeResponse(200, this.applicationOptions, request, route.pattern.pathname);
                     } else {
-                        return makeResponse(401, this.applicationOptions, request, routerInternalRoute.pattern.pathname, result.errorMessage);
+                        return makeResponse(401, this.applicationOptions, request, route.pattern.pathname, result.errorMessage);
                     }
                 }
             }
