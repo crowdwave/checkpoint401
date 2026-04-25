@@ -72,7 +72,6 @@ export class UnknownAuthError extends Error {
     constructor() {
         super("Unknown auth error");
         this.name = "UnknownAuthError";
-        console.error(this.stack); // Log the stack trace
     }
 }
 
