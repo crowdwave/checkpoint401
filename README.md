@@ -147,12 +147,20 @@ Another example endpoint function:
 
     export default async function myAuthEndpointFunction(req: Request, match: URLPatternResult | null): Promise<{ success: boolean; errorMessage?: string; }> {
         try {
-            // Perform asynchronous operations, such as fetching data or processing the request
-            const response = await fetch(req.url);
+            // Perform asynchronous operations such as a session lookup
+            // against your own user store. Build the URL from values you
+            // control - never from req.url, since req.url is the
+            // attacker-controlled value the reverse proxy passed in via
+            // the X-Forwarded-Uri header and using it as a fetch target
+            // would be SSRF.
+            const sessionId = getSessionIdFromCookie(req);
+            if (!sessionId) return { success: false, errorMessage: 'No session' };
+
+            const response = await fetch(`http://127.0.0.1:5000/sessions/${encodeURIComponent(sessionId)}`);
+            if (!response.ok) return { success: false, errorMessage: 'Session lookup failed' };
             const data = await response.json();
-            
-            // Perform some logic with the data
-            if (data.someCondition) {
+
+            if (data.valid) {
                 return { success: true};
             } else {
                 return { success: false, errorMessage: 'Request denied'}
