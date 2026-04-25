@@ -9,5 +9,23 @@ Restart=always
 User=ubuntu
 Environment=PATH=/usr/bin:/usr/local/bin
 
+# Hardening. Adjust ReadWritePaths to point at your --db-filename.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+ReadWritePaths=/opt/checkpoint401/config
+
 [Install]
 WantedBy=multi-user.target
