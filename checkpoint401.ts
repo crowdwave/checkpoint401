@@ -266,7 +266,7 @@ class URLPatternRouter {
         endpointFunction: EndpointFunction,
     ) {
         this.routerInternalRoute.push(
-            {pattern: new URLPattern({pathname: routeURLPattern}), method, endpointFunction}
+            {pattern: new URLPattern({pathname: routeURLPattern}), method: method.toUpperCase(), endpointFunction}
         );
     }
 
@@ -279,7 +279,7 @@ class URLPatternRouter {
                 const dummyBaseURL = "http://www.example.org"
                 const found = routerInternalRoute.pattern.test(request.url, dummyBaseURL);
                 const match = routerInternalRoute.pattern.exec(request.url, dummyBaseURL);
-                if (request.method === routerInternalRoute.method && found) {
+                if (request.method.toUpperCase() === routerInternalRoute.method && found) {
                     const result: { success: boolean; errorMessage?: string; } = await routerInternalRoute.endpointFunction(request, match);
                     if (result.success) {
                         return makeResponse(200, this.applicationOptions, request, routerInternalRoute.pattern.pathname);
