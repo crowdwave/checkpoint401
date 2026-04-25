@@ -321,7 +321,7 @@ function displayHelp() {
       --version: Display server version
       --help: Show help message
       --port: Port number to listen on (default: 3000 or PORT environment variable). If both are set, the server will exit with an error.
-      --listen-address: Address to listen on (default: 0.0.0.0 or LISTEN_ADDRESS environment variable). If both are set, the server will exit with an error.
+      --listen-address: Address to listen on (default: 127.0.0.1 or LISTEN_ADDRESS environment variable). If both are set, the server will exit with an error.
       --header-name-uri: Name of the header for URI (default: X-Forwarded-Uri)
       --header-name-method: Name of the header for method (default: X-Forwarded-Method)
 
