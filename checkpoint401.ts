@@ -249,7 +249,19 @@ async function updateDatabasePeriodically(
             route.passCount = 0;
             route.failCount = 0;
         }
-        await dbManager.updateDatabase(snapshot);
+        try {
+            await dbManager.updateDatabase(snapshot);
+        } catch (error) {
+            // The write failed. Fold the snapshot's counts back into
+            // the live counters so they aren't lost - the next flush
+            // will retry. Without this the snapshot data is gone from
+            // memory and never reached the DB.
+            for (let i = 0; i < routes.length; i++) {
+                routes[i].passCount = (routes[i].passCount ?? 0) + (snapshot[i].passCount ?? 0);
+                routes[i].failCount = (routes[i].failCount ?? 0) + (snapshot[i].failCount ?? 0);
+            }
+            throw error;
+        }
     } catch (error) {
         console.error('Error updating database:', error);
     } finally {
