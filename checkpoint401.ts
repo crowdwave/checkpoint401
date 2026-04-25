@@ -185,7 +185,6 @@ async function setupRoutes(
                     throw new Error(`The file '${filePath}' does not export a valid default handler.`);
                 }
                 const endpointFunctionProxy = createEndpointFunctionProxy(endpointModule.default, routeConfig, applicationOptions) as EndpointFunction;
-                console.log(routeConfig.method, routeConfig.routeURLPattern, endpointFunctionProxy);
                 urlPatternRouter.addRoute(routeConfig.method, routeConfig.routeURLPattern, endpointFunctionProxy);
                 console.log(`Route ${routeConfig.method} ${routeConfig.routeURLPattern} loaded successfully, endpoint is: ${filePath}`);
             } catch (error) {
