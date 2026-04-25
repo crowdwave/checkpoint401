@@ -17,7 +17,7 @@ type CustomError = {
     message: string;
 };
 
-export function rethrowCatchInAuth(error: CustomError) {
+export function rethrowCatchInAuth(error: CustomError): never {
     if (knownErrorNames.includes(error.name)) {
         throw error;
     } else {
