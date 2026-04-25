@@ -175,7 +175,7 @@ Another example endpoint function:
 
 This file in the repository shows how to access cookies in the request: 
 
-https://github.com/crowdwave/checkpoint401/blob/master/config/getUserIdFromRequest.ts
+https://github.com/crowdwave/checkpoint401/blob/master/config/checkCookieIsValidReturningUserId.ts
 
 ## Getting values from the inbound URL via the match object
 
