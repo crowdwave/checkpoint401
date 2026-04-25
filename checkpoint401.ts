@@ -260,27 +260,19 @@ interface routerInternalRoute {
 }
 
 function getInboundUriFromHeaders(request: Request, headerNameUri: string): string {
-    try {
-        const xForwardedUri = request.headers.get(headerNameUri);
-        if (xForwardedUri === null) {
-            throw new Error(`AUTH: ${headerNameUri} not found in headers`);
-        }
-        return xForwardedUri;
-    } catch (error) {
-        throw error;
+    const xForwardedUri = request.headers.get(headerNameUri);
+    if (xForwardedUri === null) {
+        throw new Error(`AUTH: ${headerNameUri} not found in headers`);
     }
+    return xForwardedUri;
 }
 
 function getInboundMethodFromHeaders(request: Request, headerNameMethod: string): string {
-    try {
-        const xForwardedMethod = request.headers.get(headerNameMethod);
-        if (xForwardedMethod === null) {
-            throw new Error(`AUTH: ${headerNameMethod} not found in headers`);
-        }
-        return xForwardedMethod;
-    } catch (error) {
-        throw error;
+    const xForwardedMethod = request.headers.get(headerNameMethod);
+    if (xForwardedMethod === null) {
+        throw new Error(`AUTH: ${headerNameMethod} not found in headers`);
     }
+    return xForwardedMethod;
 }
 
 class URLPatternRouter {
