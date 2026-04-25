@@ -346,6 +346,7 @@ function displayHelp() {
       --listen-address: Address to listen on (default: 127.0.0.1 or LISTEN_ADDRESS environment variable). If both are set, the server will exit with an error.
       --header-name-uri: Name of the header for URI (default: X-Forwarded-Uri)
       --header-name-method: Name of the header for method (default: X-Forwarded-Method)
+      --strict-uri: Reject inbound X-Forwarded-Uri values that are not '/'-prefixed paths or contain CR/LF/NUL bytes. Off by default for compatibility; recommended for new deployments.
 
       **Configuration Files:**
 
@@ -370,6 +371,7 @@ interface ApplicationOptions {
     verbose: boolean;
     headerNameUri: string;
     headerNameMethod: string;
+    strictUri: boolean;
 }
 
 function printApplicationOptions(options: ApplicationOptions) {
@@ -382,6 +384,7 @@ function printApplicationOptions(options: ApplicationOptions) {
     console.log(`verbose: ${options.verbose}`);
     console.log(`headerNameUri: ${options.headerNameUri}`);
     console.log(`headerNameMethod: ${options.headerNameMethod}`);
+    console.log(`strictUri: ${options.strictUri}`);
 }
 
 function parseArgs(args: string[]): ApplicationOptions {
@@ -395,6 +398,7 @@ function parseArgs(args: string[]): ApplicationOptions {
         verbose: true,
         headerNameUri: "X-Forwarded-Uri",
         headerNameMethod: "X-Forwarded-Method",
+        strictUri: false,
     };
 
     function validatePort(port: string): number {
@@ -427,6 +431,9 @@ function parseArgs(args: string[]): ApplicationOptions {
                 break;
             case "--quiet":
                 applicationOptions.verbose = false;
+                break;
+            case "--strict-uri":
+                applicationOptions.strictUri = true;
                 break;
             case "--db-filename":
                 if (i + 1 < args.length) {
@@ -534,12 +541,34 @@ function printVersion() {
     console.log(`checkpoint401 version ${VERSION}`);
 }
 
+function validateInboundUri(uri: string): void {
+    // Cheap structural checks against the value the proxy passed in via
+    // X-Forwarded-Uri. This catches:
+    //   - header-injection bytes (CR/LF/NUL)
+    //   - absolute URLs that would let an attacker steer URLPattern
+    //     onto a different host's pathname semantics
+    //   - non-path values that are obviously not what the proxy meant
+    //     to send, helping detect proxy misconfiguration early.
+    if (uri.length === 0 || uri.length > 8192) {
+        throw new Error("AUTH: inbound URI is empty or too long");
+    }
+    if (/[\r\n\0]/.test(uri)) {
+        throw new Error("AUTH: inbound URI contains CR/LF/NUL");
+    }
+    if (!uri.startsWith("/")) {
+        throw new Error("AUTH: inbound URI must start with '/'");
+    }
+}
+
 function patchMethodAndUriIntoRequest(request: Request, applicationOptions: ApplicationOptions): Request {
     // This function is a workaround to patch the method and URL into the request object
     // because the web server sends us the method and url in headers
     try {
         const method = getInboundMethodFromHeaders(request, applicationOptions.headerNameMethod);
         const url = getInboundUriFromHeaders(request, applicationOptions.headerNameUri);
+        if (applicationOptions.strictUri) {
+            validateInboundUri(url);
+        }
 
         const handler = {
             get: function(target: Request, prop: string) {
