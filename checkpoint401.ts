@@ -303,7 +303,7 @@ class URLPatternRouter {
                 const found = routerInternalRoute.pattern.test(request.url, dummyBaseURL);
                 const match = routerInternalRoute.pattern.exec(request.url, dummyBaseURL);
                 if (request.method.toUpperCase() === routerInternalRoute.method && found) {
-                    const result: { success: boolean; errorMessage?: string; } = await routerInternalRoute.endpointFunction(request, match);
+                    const result: Awaited<ReturnType<EndpointFunction>> = await routerInternalRoute.endpointFunction(request, match);
                     if (result.success) {
                         return makeResponse(200, this.applicationOptions, request, routerInternalRoute.pattern.pathname);
                     } else {
