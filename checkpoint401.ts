@@ -449,8 +449,16 @@ function parseArgs(args: string[]): ApplicationOptions {
     let verboseFromCli = false;
     let quietFromCli = false;
 
+    const seenFlags = new Set<string>();
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
+        if (arg.startsWith("--")) {
+            if (seenFlags.has(arg)) {
+                console.error(`Error: ${arg} was passed more than once.`);
+                Deno.exit(1);
+            }
+            seenFlags.add(arg);
+        }
         switch (arg) {
             case "--version":
                 printVersion()
