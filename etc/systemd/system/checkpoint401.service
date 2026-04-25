@@ -3,7 +3,7 @@ Description=checkpoint401
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/deno run --allow-net --allow-read --allow-env --allow-write /opt/checkpoint401/checkpoint401.ts
+ExecStart=/usr/bin/deno run --allow-net=127.0.0.1:3000 --allow-read=/opt/checkpoint401 --allow-env=PORT,LISTEN_ADDRESS --allow-write=/opt/checkpoint401/config/route_stats_counters.db /opt/checkpoint401/checkpoint401.ts
 WorkingDirectory=/opt/checkpoint401/config
 Restart=always
 User=ubuntu

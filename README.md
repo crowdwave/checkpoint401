@@ -245,7 +245,20 @@ Create a directory named config and place your routes.json file and endpoint Typ
 Change your current working directory to config and run the server:
 
     cd config
-    deno run --allow-net --allow-read --allow-env --allow-write ../checkpoint401.ts 
+    deno run \
+      --allow-net=127.0.0.1:3000 \
+      --allow-read=. \
+      --allow-env=PORT,LISTEN_ADDRESS \
+      --allow-write=route_stats_counters.db \
+      ../checkpoint401.ts
+
+The unscoped form (`--allow-net --allow-read --allow-env --allow-write`)
+also works but grants the process arbitrary outbound network access,
+read access to the entire filesystem, and write access to the entire
+filesystem. Prefer the scoped form above. Adjust the values to match
+your `--port`, `--listen-address`, and `--db-filename` if you change
+them, and add any additional env vars or hosts your endpoint functions
+need.
 
 ## Command-Line Arguments
 
