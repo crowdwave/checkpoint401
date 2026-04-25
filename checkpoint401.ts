@@ -446,6 +446,8 @@ function parseArgs(args: string[]): ApplicationOptions {
 
     let portFromCli = false;
     let hostnameFromCli = false;
+    let verboseFromCli = false;
+    let quietFromCli = false;
 
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
@@ -456,9 +458,11 @@ function parseArgs(args: string[]): ApplicationOptions {
                 break;
             case "--verbose":
                 applicationOptions.verbose = true;
+                verboseFromCli = true;
                 break;
             case "--quiet":
                 applicationOptions.verbose = false;
+                quietFromCli = true;
                 break;
             case "--strict-uri":
                 applicationOptions.strictUri = true;
@@ -567,6 +571,11 @@ function parseArgs(args: string[]): ApplicationOptions {
     }
     if (!hostnameFromCli && envhostname) {
         applicationOptions.hostname = envhostname;
+    }
+
+    if (verboseFromCli && quietFromCli) {
+        console.error("Error: --verbose and --quiet are mutually exclusive.");
+        Deno.exit(1);
     }
 
     // Header names must be non-empty token chars per RFC 7230, and the
