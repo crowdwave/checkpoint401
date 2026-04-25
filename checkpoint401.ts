@@ -470,6 +470,15 @@ function parseArgs(args: string[]): ApplicationOptions {
                     Deno.exit(1);
                 }
                 break;
+            case "--config-dir":
+                if (i + 1 < args.length) {
+                    applicationOptions.currentWorkingDir = args[i + 1];
+                    i++;
+                } else {
+                    console.error("Error: --config-dir option requires a directory path.");
+                    Deno.exit(1);
+                }
+                break;
             case "--help":
                 displayHelp();
                 Deno.exit(0);
