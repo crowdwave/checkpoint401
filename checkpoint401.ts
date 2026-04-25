@@ -569,6 +569,23 @@ function parseArgs(args: string[]): ApplicationOptions {
         applicationOptions.hostname = envhostname;
     }
 
+    // Header names must be non-empty token chars per RFC 7230, and the
+    // URI and method headers must differ - otherwise both reads return
+    // the same value and the router can never match.
+    const httpTokenChars = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+    if (!httpTokenChars.test(applicationOptions.headerNameUri)) {
+        console.error(`Error: --header-name-uri '${applicationOptions.headerNameUri}' is not a valid HTTP header name.`);
+        Deno.exit(1);
+    }
+    if (!httpTokenChars.test(applicationOptions.headerNameMethod)) {
+        console.error(`Error: --header-name-method '${applicationOptions.headerNameMethod}' is not a valid HTTP header name.`);
+        Deno.exit(1);
+    }
+    if (applicationOptions.headerNameUri.toLowerCase() === applicationOptions.headerNameMethod.toLowerCase()) {
+        console.error(`Error: --header-name-uri and --header-name-method must differ (both set to '${applicationOptions.headerNameUri}').`);
+        Deno.exit(1);
+    }
+
     return applicationOptions;
 }
 
