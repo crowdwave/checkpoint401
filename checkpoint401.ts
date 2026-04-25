@@ -292,7 +292,12 @@ const makeResponse = (
     }
     const includeBody = statusCode === 401 && errorMessage && !applicationOptions.suppressErrorBody;
     const body = includeBody ? JSON.stringify({error: errorMessage}) : null;
-    return new Response(body, {status: statusCode});
+    // RFC 7235 requires a 401 to include WWW-Authenticate. Most reverse
+    // proxies translate the auth response into their own challenge and
+    // ignore this, but emit a generic value for spec conformance.
+    const headers: HeadersInit | undefined =
+        statusCode === 401 ? {"WWW-Authenticate": "Bearer realm=\"checkpoint401\""} : undefined;
+    return new Response(body, {status: statusCode, headers});
 }
 
 interface RouteEntry {
