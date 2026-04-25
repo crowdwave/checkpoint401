@@ -86,12 +86,25 @@ class DatabaseManager {
               AND route = ?
         `;
 
+        // Wrap the per-route updates in a single transaction so a
+        // failure on the Nth row rolls back rows 1..N-1 instead of
+        // committing a partial flush. Re-throw on failure so the
+        // caller can fold the snapshot back into the in-memory
+        // counters and try again on the next tick.
         try {
-            for (const routeConfig of routes) {
-                this.db.query(updateStmt, [routeConfig.passCount, routeConfig.failCount, routeConfig.method, routeConfig.routeURLPattern]);
+            this.db.query("BEGIN");
+            try {
+                for (const routeConfig of routes) {
+                    this.db.query(updateStmt, [routeConfig.passCount, routeConfig.failCount, routeConfig.method, routeConfig.routeURLPattern]);
+                }
+                this.db.query("COMMIT");
+            } catch (error) {
+                this.db.query("ROLLBACK");
+                throw error;
             }
         } catch (error) {
             console.error("Error updating database:", error);
+            throw error;
         }
     }
 
