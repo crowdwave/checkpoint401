@@ -44,21 +44,22 @@ class DatabaseManager {
     }
 
     async createTableIfNotExists() {
-        try {
-            this.db.query(`
-                CREATE TABLE IF NOT EXISTS route_stats_counters
-                (
-                    method    TEXT    NOT NULL,
-                    route     TEXT    NOT NULL,
-                    passCount INTEGER NOT NULL DEFAULT 0,
-                    failCount INTEGER NOT NULL DEFAULT 0,
-                    PRIMARY KEY (method, route)
-                )
-            `);
-            console.log("Table route_stats_counters created or already exists.");
-        } catch (error) {
-            console.error("Error creating table:", error);
-        }
+        // Propagate failure rather than swallowing it: if the stats
+        // table can't be created (read-only filesystem, locked DB,
+        // disk full) the server is in a broken state and should fail
+        // fast at startup rather than serve traffic with no working
+        // stats DB.
+        this.db.query(`
+            CREATE TABLE IF NOT EXISTS route_stats_counters
+            (
+                method    TEXT    NOT NULL,
+                route     TEXT    NOT NULL,
+                passCount INTEGER NOT NULL DEFAULT 0,
+                failCount INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (method, route)
+            )
+        `);
+        console.log("Table route_stats_counters created or already exists.");
     }
 
     async insertInitialStats(routes: RouteItem[]) {
