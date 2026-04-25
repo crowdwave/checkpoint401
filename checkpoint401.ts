@@ -327,7 +327,8 @@ function displayHelp() {
       --db-filename: Path to the SQLite database file (default: route_stats_counters.db)
       --update-period: Period in milliseconds to update the database and write counters to disk (default: 10000)
       --disable-stats: Disable the stats feature
-      --verbose: Enable verbose logging
+      --verbose: Enable verbose logging (default: on)
+      --quiet: Disable verbose per-request logging. Verbose logs include the full request URL, which can contain tokens/PII passed in the query string.
       --version: Display server version
       --help: Show help message
       --port: Port number to listen on (default: 3000 or PORT environment variable). If both are set, the server will exit with an error.
@@ -412,6 +413,9 @@ function parseArgs(args: string[]): ApplicationOptions {
                 break;
             case "--verbose":
                 applicationOptions.verbose = true;
+                break;
+            case "--quiet":
+                applicationOptions.verbose = false;
                 break;
             case "--db-filename":
                 if (i + 1 < args.length) {
