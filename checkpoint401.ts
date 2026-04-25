@@ -271,6 +271,15 @@ async function updateDatabasePeriodically(
     }
 }
 
+// Replace any control character that could break log line framing
+// (CR, LF, NUL, plus other C0 controls) with a safe placeholder.
+// Anything containing these in a log line would otherwise let a
+// caller forge fake log entries by injecting the bytes into the
+// inbound URI or method header.
+function sanitizeForLog(s: string): string {
+    return s.replace(/[\x00-\x1f\x7f]/g, "?");
+}
+
 const makeResponse = (
     statusCode: 401 | 200 | 404,
     applicationOptions: ApplicationOptions,
@@ -279,7 +288,7 @@ const makeResponse = (
     errorMessage?: string,
 ): Response => {
     if (applicationOptions.verbose) {
-        console.log(`[${new Date().toISOString()}] status: ${statusCode} method: ${request.method} pattern: ${URLPatternPathname} request.url: ${request.url}`);
+        console.log(`[${new Date().toISOString()}] status: ${statusCode} method: ${sanitizeForLog(request.method)} pattern: ${URLPatternPathname} request.url: ${sanitizeForLog(request.url)}`);
     }
     const includeBody = statusCode === 401 && errorMessage && !applicationOptions.suppressErrorBody;
     const body = includeBody ? JSON.stringify({error: errorMessage}) : null;
