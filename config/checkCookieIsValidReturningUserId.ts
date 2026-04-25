@@ -2,7 +2,12 @@ import {config, DotenvConfig} from "https://deno.land/x/dotenv@v3.2.2/mod.ts";
 import {verify} from "https://deno.land/x/djwt@v2.2/mod.ts";
 import {JwtSecretNotSetError, knownErrorNames, MissingJwtTokenError, NoCookiesFoundError, rethrowCatchInAuth, UnknownAuthError} from "./customErrors.ts";
 
-const env: DotenvConfig = config({path: ".env"});
+// Resolve .env relative to this file rather than the process cwd, so
+// the example works regardless of where the server is launched from
+// (e.g. when --config-dir points elsewhere or when systemd's
+// WorkingDirectory differs from the directory holding .env).
+const envPath = new URL(".env", import.meta.url).pathname;
+const env: DotenvConfig = config({path: envPath});
 
 interface DecodedToken {
     id: string;

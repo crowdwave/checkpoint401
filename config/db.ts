@@ -1,8 +1,10 @@
 import postgres from "https://deno.land/x/postgresjs@v3.4.4/mod.js";
 import { config } from "https://deno.land/x/dotenv@v3.2.2/mod.ts";
 
-// Load environment variables
-const env = config({ path: ".env" });
+// Resolve .env relative to this file rather than the process cwd.
+// See checkCookieIsValidReturningUserId.ts for the rationale.
+const envPath = new URL(".env", import.meta.url).pathname;
+const env = config({ path: envPath });
 
 if (!env.DATABASE_URL) {
   console.log("env.DATABASE_URL invalid");
