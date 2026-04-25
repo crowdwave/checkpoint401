@@ -194,8 +194,10 @@ async function setupRoutes(
         await dbManager.insertInitialStats(routeItems);
         return urlPatternRouter;
     } catch (error) {
-        console.error('Failed to set up routes:', error);
-        throw error;
+        // Re-throw with a context-prefixed message; runServer's catch
+        // is the single layer that logs the failure to stderr, which
+        // avoids the double-log we used to produce here.
+        throw new Error(`Failed to set up routes: ${error.message}`);
     }
 }
 
