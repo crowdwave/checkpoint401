@@ -22,7 +22,6 @@ export default async function authFuncSignedInUserMustBeAMemberOfTheChannel(
         const channel_id = match?.pathname?.groups?.channel_id;
         if (!channel_id) throw new InternalApplicationError(`authFuncSignedInUserMustBeAMemberOfTheChannel channel_id ${channel_id}`);
         const isUserAMemberOfChannel: boolean = await sqlQueryIsUserAMemberOfChannel(user_id, channel_id);
-        console.log(isUserAMemberOfChannel)
         // signed in user is a member of the channel
         if (isUserAMemberOfChannel) return {success: true};
         throw new UserNotAMemberOfChannelError();
