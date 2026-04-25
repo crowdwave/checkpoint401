@@ -259,6 +259,12 @@ interface RouteEntry {
     endpointFunction: EndpointFunction,
 }
 
+// URLPattern requires a base URL to resolve a path-only string. We
+// only care about the pathname match, so any syntactically-valid URL
+// works. Hoisted to module scope so it isn't re-allocated on every
+// route iteration of every request.
+const URL_PATTERN_BASE = "http://www.example.org";
+
 function getInboundUriFromHeaders(request: Request, headerNameUri: string): string {
     const xForwardedUri = request.headers.get(headerNameUri);
     if (xForwardedUri === null) {
@@ -296,19 +302,16 @@ class URLPatternRouter {
     async handleRequest(request: Request) {
         try {
 
+            const requestMethod = request.method.toUpperCase();
             for (const route of this.routes) {
-                // this is MEANT to be http://www.example.org yes even for your application
-                // it is a dummy base URL, as we are only interested in the pathname
-                const dummyBaseURL = "http://www.example.org"
-                const found = route.pattern.test(request.url, dummyBaseURL);
-                const match = route.pattern.exec(request.url, dummyBaseURL);
-                if (request.method.toUpperCase() === route.method && found) {
-                    const result: Awaited<ReturnType<EndpointFunction>> = await route.endpointFunction(request, match);
-                    if (result.success) {
-                        return makeResponse(200, this.applicationOptions, request, route.pattern.pathname);
-                    } else {
-                        return makeResponse(401, this.applicationOptions, request, route.pattern.pathname, result.errorMessage);
-                    }
+                if (requestMethod !== route.method) continue;
+                const match = route.pattern.exec(request.url, URL_PATTERN_BASE);
+                if (match === null) continue;
+                const result: Awaited<ReturnType<EndpointFunction>> = await route.endpointFunction(request, match);
+                if (result.success) {
+                    return makeResponse(200, this.applicationOptions, request, route.pattern.pathname);
+                } else {
+                    return makeResponse(401, this.applicationOptions, request, route.pattern.pathname, result.errorMessage);
                 }
             }
             return makeResponse(404, this.applicationOptions, request, null);
