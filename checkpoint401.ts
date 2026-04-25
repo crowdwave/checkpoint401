@@ -206,8 +206,8 @@ async function setupRoutes(
                 throw new Error(`Error importing endpoint '${filePath}': ${error.message}`);
             }
         }
-        if (!applicationOptions.disableStats) updateDatabasePeriodically(dbManager, routeItems, applicationOptions);
         await dbManager.insertInitialStats(routeItems);
+        if (!applicationOptions.disableStats) updateDatabasePeriodically(dbManager, routeItems, applicationOptions);
         return urlPatternRouter;
     } catch (error) {
         // Re-throw with a context-prefixed message; runServer's catch
