@@ -210,13 +210,17 @@ async function updateDatabasePeriodically(
     applicationOptions: ApplicationOptions,
 ) {
     const {updatePeriod} = applicationOptions;
-    if (!dbManager || !(dbManager instanceof DatabaseManager)) {
-        throw new Error('Invalid dbManager argument. It must be an instance of DatabaseManager.');
-    }
-    if (typeof updatePeriod !== 'number' || updatePeriod <= 0) {
-        throw new Error('Invalid updatePeriod argument. It must be a positive number.');
-    }
     try {
+        // Validate inside the try so a bad invariant is logged and the
+        // next iteration is still scheduled - otherwise the throw
+        // escapes setTimeout's callback as an unhandled rejection and
+        // the periodic flush silently stops forever.
+        if (!dbManager || !(dbManager instanceof DatabaseManager)) {
+            throw new Error('Invalid dbManager argument. It must be an instance of DatabaseManager.');
+        }
+        if (typeof updatePeriod !== 'number' || updatePeriod <= 0) {
+            throw new Error('Invalid updatePeriod argument. It must be a positive number.');
+        }
         // Snapshot then clear before writing, so any increments that
         // land while the write is in flight are preserved for the next
         // flush rather than zeroed. Today the sqlite query is sync so
