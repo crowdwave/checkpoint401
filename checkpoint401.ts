@@ -294,8 +294,14 @@ class URLPatternRouter {
         routeURLPattern: string,
         endpointFunction: EndpointFunction,
     ) {
+        let pattern: URLPattern;
+        try {
+            pattern = new URLPattern({pathname: routeURLPattern});
+        } catch (error) {
+            throw new Error(`Invalid routeURLPattern '${routeURLPattern}' for ${method}: ${error.message}`);
+        }
         this.routes.push(
-            {pattern: new URLPattern({pathname: routeURLPattern}), method: method.toUpperCase(), endpointFunction}
+            {pattern, method: method.toUpperCase(), endpointFunction}
         );
     }
 
