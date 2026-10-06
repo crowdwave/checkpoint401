@@ -11,6 +11,8 @@ https://github.com/crowdwave/checkpoint401/blob/master/checkpoint401.ts
 
 # Checkpoint 401 Forward Auth Security Server
 
+> **Upgrading from version 4?** Version 5 requires Deno 2 and changes several defaults so that requests version 4 allowed are now denied. Read [MIGRATING.md](MIGRATING.md) before you upgrade.
+
 Important May 2024 note: **Checkpoint 401 is aimed at sophisticated TypeScript developers... it is brand new and is not battle-tested.** We recommend you first read the source code in detail and assure yourself of its suitability for your needs - there is only a single source file - small enough for a skilled TypeScript developer to understand. We welcome code reviews and feedback to improve its reliability and security. Checkpoint 401 has no guarantee at all - use at your own risk.
 
 ## What is a Forward Auth Server?
@@ -255,7 +257,7 @@ The example config reads `JWT_SECRET` and `DATABASE_URL` from `config/.env`. Cop
 ## Usage instructions
 
 **Install Deno:**
-Checkpoint 401 requires Deno 2.x. If you don't have Deno installed, follow the instructions on the official Deno website. All dependencies are pinned to exact versions in the source and in `deno.lock`; run `deno task cache` once to download and verify them.
+Checkpoint 401 requires Deno 2.x. If you don't have Deno installed, follow the instructions on the official Deno website. If you are upgrading an existing version 4 deployment, follow [MIGRATING.md](MIGRATING.md). All dependencies are pinned to exact versions in the source and in `deno.lock`; run `deno task cache` once to download and verify them.
 
 **Create a Configuration Directory:**
 Create a directory named config and place your routes.json file and endpoint TypeScript files in this directory.
