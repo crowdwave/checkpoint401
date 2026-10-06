@@ -362,10 +362,11 @@ const makeResponse = (
     // RFC 7235 requires a 401 to include WWW-Authenticate. Most reverse
     // proxies translate the auth response into their own challenge and
     // ignore this, but emit a generic value for spec conformance.
-    const headers: HeadersInit | undefined =
+    const headers: Record<string, string> =
         statusCode === 401 ? {"WWW-Authenticate": "Bearer realm=\"checkpoint401\""}
             : statusCode === 503 ? {"Retry-After": "1"}
-                : undefined;
+                : statusCode === 200 ? {...applicationOptions.allowHeaders}
+                    : {};
     return new Response(body, {status: statusCode, headers});
 }
 
@@ -518,7 +519,7 @@ function displayHelp() {
     console.log(`
       Server usage:
 
-      checkpoint401 [--config-dir <dir>] [--db-filename <path>] [--update-period <ms>] [--disable-stats] [--verbose] [--quiet] [--version] [--help] [--port <n>] [--listen-address <addr>] [--header-name-uri <name>] [--header-name-method <name>] [--strict-uri] [--no-strict-uri] [--allow-encoded-path] [--no-error-body] [--endpoint-timeout-ms <ms>] [--shutdown-timeout-ms <ms>] [--max-in-flight <n>]
+      checkpoint401 [--config-dir <dir>] [--db-filename <path>] [--update-period <ms>] [--disable-stats] [--verbose] [--quiet] [--version] [--help] [--port <n>] [--listen-address <addr>] [--header-name-uri <name>] [--header-name-method <name>] [--strict-uri] [--no-strict-uri] [--allow-encoded-path] [--allow-header <name:value>]... [--no-error-body] [--endpoint-timeout-ms <ms>] [--shutdown-timeout-ms <ms>] [--max-in-flight <n>]
 
       --config-dir: Directory containing routes.json, the endpoint files and any helper .ts files (default: current directory)
       --db-filename: Path to the SQLite stats database (default: route_stats_counters.db in the current directory). The DIRECTORY must be writable: SQLite creates journal files beside the DB.
@@ -535,6 +536,7 @@ function displayHelp() {
       --strict-uri: Reject inbound URI values that are not '/'-prefixed paths, start with '//', or contain backslashes, dot segments, '#', control bytes, or percent-encoded forms of any of those. ON by default; this flag is accepted for compatibility.
       --no-strict-uri: Turn the above off. Only do this if your proxy sends something other than a plain request path and you understand the parser-differential risk.
       --allow-encoded-path: Keep strict mode but permit percent-encoded '/', '\\', '#' and '%' in path segments, for backends whose routes legitimately carry them (e.g. 'group%2Fproject' ids). Only enable it if you have confirmed your backend does not decode and re-split the path. Encoded control bytes and '%2e' stay refused.
+      --allow-header: 'Name: Value' added to every 200 (allow) response. Repeatable. Lets a reverse proxy copy proof of authorisation onto the upstream request (Caddy: copy_headers), so the application can refuse requests that did not pass through the auth layer.
       --no-error-body: Do not include the endpoint's errorMessage in 401 response bodies. Off by default. Recommended if your reverse proxy forwards the auth response body to clients or error pages, since distinct error strings can enable user enumeration.
       --endpoint-timeout-ms: Maximum time (ms) an endpoint function may run before the request is failed-closed (returned as 401) and the endpoint's AbortSignal fires (default: 10000). 0 disables.
       --shutdown-timeout-ms: On SIGTERM/SIGINT, how long (ms) to wait for in-flight requests to drain before flushing counters and exiting anyway (default: 10000). A second signal exits immediately.
@@ -570,11 +572,15 @@ interface ApplicationOptions {
     endpointTimeoutMs: number; // 0 disables the timeout.
     shutdownTimeoutMs: number;
     maxInFlight: number; // 0 disables the cap.
+    // Headers added to every 200 (allow) response. Reverse proxies can
+    // copy these onto the upstream request (Caddy: copy_headers) so the
+    // application can confirm the request passed through the auth layer.
+    allowHeaders: Record<string, string>;
 }
 
 function printApplicationOptions(options: ApplicationOptions) {
     for (const [key, value] of Object.entries(options)) {
-        console.log(`${key}: ${value}`);
+        console.log(`${key}: ${typeof value === "object" ? JSON.stringify(value) : value}`);
     }
 }
 
@@ -595,6 +601,7 @@ function parseArgs(args: string[]): ApplicationOptions {
         endpointTimeoutMs: 10000,
         shutdownTimeoutMs: 10000,
         maxInFlight: 1024,
+        allowHeaders: {},
     };
 
     const MAX_TIMER_MS = 2 ** 31 - 1; // setTimeout int32 limit; larger values fire immediately.
@@ -634,7 +641,7 @@ function parseArgs(args: string[]): ApplicationOptions {
     const seenFlags = new Set<string>();
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
-        if (arg.startsWith("--")) {
+        if (arg.startsWith("--") && arg !== "--allow-header") {
             if (seenFlags.has(arg)) fail(`${arg} was passed more than once.`);
             seenFlags.add(arg);
         }
@@ -665,6 +672,19 @@ function parseArgs(args: string[]): ApplicationOptions {
             case "--no-error-body":
                 applicationOptions.suppressErrorBody = true;
                 break;
+            case "--allow-header": {
+                // "Name: Value" or "Name:Value". Repeatable.
+                const raw = takeValue(i, arg, "a 'Name: Value' header");
+                i++;
+                const colon = raw.indexOf(":");
+                if (colon <= 0) fail(`${arg} expects 'Name: Value', got '${raw}'.`);
+                const name = raw.slice(0, colon).trim();
+                const value = raw.slice(colon + 1).trim();
+                if (!/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(name)) fail(`${arg}: '${name}' is not a valid HTTP header name.`);
+                if (value.length === 0 || /[\x00-\x08\x0a-\x1f\x7f]/.test(value)) fail(`${arg}: value for '${name}' is empty or contains control characters.`);
+                applicationOptions.allowHeaders[name] = value;
+                break;
+            }
             case "--endpoint-timeout-ms":
                 applicationOptions.endpointTimeoutMs = parseInteger(arg, takeValue(i, arg, "a number of milliseconds"), 0, MAX_TIMER_MS);
                 i++;
