@@ -1,13 +1,13 @@
 import sql from "./db.ts";
-import {PendingQuery} from "https://deno.land/x/postgresjs@v3.4.4/types/index.d.ts";
+import {UserMinimal} from "./types.ts";
 
 export const sqlStatementGetUserMinimal = (
     username: string | undefined,
     email: string | undefined,
     id: string | undefined,
-): PendingQuery<any> | null => {
+): Promise<UserMinimal[]> | null => {
     if (username !== undefined) {
-        return sql`
+        return sql<UserMinimal[]>`
             SELECT id,
                    username
             FROM users
@@ -15,7 +15,7 @@ export const sqlStatementGetUserMinimal = (
         `;
     }
     if (email !== undefined) {
-        return sql`
+        return sql<UserMinimal[]>`
             SELECT id,
                    username
             FROM users
@@ -23,7 +23,7 @@ export const sqlStatementGetUserMinimal = (
         `;
     }
     if (id !== undefined) {
-        return sql`
+        return sql<UserMinimal[]>`
             SELECT id,
                    username
             FROM users

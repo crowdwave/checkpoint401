@@ -9,19 +9,17 @@ export const knownErrorNames: string[] = [
     "UserNotFoundError",
     "UsernameInUrlDoesNotMatchSignedInUserError",
     "UserIsNotSignedInError",
-    "UserInvalidError",
 ];
 
-type CustomError = {
-    name: string;
-    message: string;
-};
-
-export function rethrowCatchInAuth(error: CustomError): never {
-    if (knownErrorNames.includes(error.name)) {
+export function rethrowCatchInAuth(error: unknown): never {
+    if (error instanceof Error && knownErrorNames.includes(error.name)) {
         throw error;
     } else {
-        console.error(`ALERT DEVELOPERS! ERROR WAS NOT IN KNOWN ERRORS: ${error.name} - ${error.message}`)
+        const name = error instanceof Error ? error.name : typeof error;
+        const message = error instanceof Error ? error.message : String(error);
+        // Single line, control characters stripped: this is reachable by
+        // unauthenticated callers and must not be a log-forging vector.
+        console.error(`ALERT DEVELOPERS! ERROR WAS NOT IN KNOWN ERRORS: ${name} - ${message}`.replace(/[\x00-\x1f\x7f]/g, "?"));
         throw new UnknownAuthError();
     }
 }
@@ -87,8 +85,7 @@ export class InternalApplicationError extends Error {
         super("Internal application error");
         this.name = "InternalApplicationError";
         // this should not happen in production
-        console.error(`InternalApplicationError ALERT DEVELOPERS! - ${info}`);
-        console.error(this.stack);
+        console.error(`InternalApplicationError ALERT DEVELOPERS! - ${info}`.replace(/[\x00-\x1f\x7f]/g, "?"));
     }
 }
 

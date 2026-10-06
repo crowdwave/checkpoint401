@@ -1,38 +1,47 @@
-import {config, DotenvConfig} from "https://deno.land/x/dotenv@v3.2.2/mod.ts";
-import {verify} from "https://deno.land/x/djwt@v2.2/mod.ts";
-import {JwtSecretNotSetError, knownErrorNames, MissingJwtTokenError, NoCookiesFoundError, rethrowCatchInAuth, UnknownAuthError} from "./customErrors.ts";
-
-// Resolve .env relative to this file rather than the process cwd, so
-// the example works regardless of where the server is launched from
-// (e.g. when --config-dir points elsewhere or when systemd's
-// WorkingDirectory differs from the directory holding .env).
-const envPath = new URL(".env", import.meta.url).pathname;
-const env: DotenvConfig = config({path: envPath});
+import {verify} from "jsr:@zaubrik/djwt@3.0.2";
+import {env} from "./env.ts";
+import {JwtSecretNotSetError, MissingJwtTokenError, NoCookiesFoundError, rethrowCatchInAuth} from "./customErrors.ts";
 
 interface DecodedToken {
-    id: string;
-    exp?: number;
-    nbf?: number;
+    id?: unknown;
+    exp?: unknown;
+    nbf?: unknown;
 }
+
+// djwt v3 takes a CryptoKey. Import it once; verify() then enforces that
+// the token's 'alg' header matches the key's algorithm (HS256), so
+// 'alg: none' and algorithm-confusion tokens are rejected.
+const MIN_SECRET_BYTES = 32; // 256 bits, per RFC 7518 §3.2 for HS256.
+const hmacKeyPromise: Promise<CryptoKey> = (async () => {
+    if (!env.JWT_SECRET) throw new JwtSecretNotSetError();
+    const raw = new TextEncoder().encode(env.JWT_SECRET);
+    if (raw.byteLength < MIN_SECRET_BYTES) {
+        throw new Error(`JWT_SECRET must be at least ${MIN_SECRET_BYTES} bytes for HS256 (got ${raw.byteLength}).`);
+    }
+    return await crypto.subtle.importKey("raw", raw, {name: "HMAC", hash: "SHA-256"}, false, ["verify"]);
+})();
+// Surface a bad secret at startup rather than on the first request.
+await hmacKeyPromise;
 
 export async function checkCookieIsValidReturningUserId(req: Request): Promise<string> {
     try {
-        if (!env.JWT_SECRET) throw new JwtSecretNotSetError();
         const cookies: string | null = req.headers.get("Cookie");
         if (!cookies) throw new NoCookiesFoundError();
         const jwtCookie = cookies.split(/;\s*/).find((c) => c.startsWith("token="));
         if (!jwtCookie) throw new MissingJwtTokenError();
         const token = jwtCookie.slice(jwtCookie.indexOf("=") + 1);
-        const decoded = await verify(token, env.JWT_SECRET, "HS256") as unknown as DecodedToken;
-        // Defensive expiry / not-before check. djwt should reject these
-        // already, but enforce here so a token without an exp claim
-        // can't be valid forever, and so behaviour is correct even if
-        // the underlying lib relaxes its checks.
+        const decoded = await verify(token, await hmacKeyPromise) as DecodedToken;
+        // Defensive expiry / not-before check. djwt rejects expired and
+        // not-yet-valid tokens, but only when the claims are present;
+        // require exp so a token without one can't be valid forever.
         const nowSeconds = Math.floor(Date.now() / 1000);
         if (typeof decoded.exp !== "number" || decoded.exp <= nowSeconds) {
             throw new MissingJwtTokenError();
         }
         if (typeof decoded.nbf === "number" && decoded.nbf > nowSeconds) {
+            throw new MissingJwtTokenError();
+        }
+        if (typeof decoded.id !== "string" || decoded.id.length === 0) {
             throw new MissingJwtTokenError();
         }
         return decoded.id;

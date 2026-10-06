@@ -6,7 +6,7 @@ import {rethrowCatchInAuth, UserIsNotSignedInError} from "./customErrors.ts";
 
 export default async function authFuncUserMustBeSignedInViaCookie(
     req: Request,
-    match: URLPatternResult | null,
+    _match: URLPatternResult | null,
 ): Promise<{ success: boolean, errorMessage?: string }> {
 
     try {

@@ -1,8 +1,7 @@
 import sql from "./db.ts";
-import {PendingQuery} from "https://deno.land/x/postgresjs@v3.4.4/types/index.d.ts";
 
-export const sqlStatementIsUserAMemberOfChannel = (user_id: string, channel_id: string): PendingQuery<any> => {
-    return sql`
+export const sqlStatementIsUserAMemberOfChannel = (user_id: string, channel_id: string): Promise<{ exists: boolean }[]> => {
+    return sql<{ exists: boolean }[]>`
         SELECT EXISTS (SELECT 1
                        FROM public.channel_members cm
                                 JOIN public.channels c ON cm.channel_id = c.channel_id
@@ -10,4 +9,3 @@ export const sqlStatementIsUserAMemberOfChannel = (user_id: string, channel_id: 
                          AND c.channel_id = ${channel_id})
     `;
 };
-
