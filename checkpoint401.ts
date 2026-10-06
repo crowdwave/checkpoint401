@@ -64,8 +64,13 @@ function errName(error: unknown): string {
 // Anything containing these in a log line would otherwise let a
 // caller forge fake log entries by injecting the bytes into the
 // inbound URI or method header.
+// Also truncates: error text can embed request-derived strings (a
+// database error quoting a bad parameter, for instance), and the
+// forwarded URI alone may be 8KB.
+const MAX_LOG_FIELD = 512;
 function sanitizeForLog(s: string): string {
-    return s.replace(/[\x00-\x1f\x7f]/g, "?");
+    const cleaned = s.replace(/[\x00-\x1f\x7f]/g, "?");
+    return cleaned.length > MAX_LOG_FIELD ? cleaned.slice(0, MAX_LOG_FIELD) + "...[truncated]" : cleaned;
 }
 
 class DatabaseManager {
@@ -141,9 +146,14 @@ class DatabaseManager {
 
 interface LoadedModules {
     shutdownHooks: Array<{ name: string; hook: ShutdownHook }>;
+    seen: Set<string>;
 }
 
 function collectShutdownHook(module: Record<string, unknown>, name: string, loaded: LoadedModules) {
+    // A file referenced by several routes is imported (from cache) once
+    // per route; register its hook only once.
+    if (loaded.seen.has(name)) return;
+    loaded.seen.add(name);
     if (typeof module.onShutdown === "function") {
         loaded.shutdownHooks.push({name, hook: module.onShutdown as ShutdownHook});
     }
@@ -341,7 +351,9 @@ const makeResponse = (
     // proxies translate the auth response into their own challenge and
     // ignore this, but emit a generic value for spec conformance.
     const headers: HeadersInit | undefined =
-        statusCode === 401 ? {"WWW-Authenticate": "Bearer realm=\"checkpoint401\""} : undefined;
+        statusCode === 401 ? {"WWW-Authenticate": "Bearer realm=\"checkpoint401\""}
+            : statusCode === 503 ? {"Retry-After": "1"}
+                : undefined;
     return new Response(body, {status: statusCode, headers});
 }
 
@@ -715,9 +727,12 @@ function printVersion() {
 // rather than authorised on our interpretation. Also rejects control
 // bytes, raw or percent-encoded, which otherwise reach log lines and
 // error messages via match groups.
-// Percent-encoded control bytes, '.', '/', '\\' and '#': all of these
-// change meaning between a decoding parser and a non-decoding one.
-const PERCENT_ENCODED_RISKY = /%(0[0-9a-f]|1[0-9a-f]|7f|2e|2f|5c|23)/i;
+// Percent-encoded control bytes, '.', '/', '\\', '#' and '%' itself:
+// all of these change meaning between a decoding parser and a
+// non-decoding one. '%25' is included because a backend that decodes
+// twice turns '%252e%252e' into '..' after this server has already
+// authorised the literal form.
+const PERCENT_ENCODED_RISKY = /%(0[0-9a-f]|1[0-9a-f]|7f|2e|2f|5c|23|25)/i;
 
 function validateInboundUri(uri: string): void {
     if (uri.length === 0 || uri.length > 8192) {
@@ -745,7 +760,7 @@ function validateInboundUri(uri: string): void {
         throw new Error("AUTH: inbound URI path contains a backslash");
     }
     if (PERCENT_ENCODED_RISKY.test(path)) {
-        throw new Error("AUTH: inbound URI path contains a percent-encoded control byte, '.', '/', '\\' or '#'");
+        throw new Error("AUTH: inbound URI path contains a percent-encoded control byte, '.', '/', '\\', '#' or '%'");
     }
     for (const segment of path.split("/")) {
         if (segment === "." || segment === "..") {
@@ -798,7 +813,7 @@ async function runServer(): Promise<void> {
             dbManager.createTableIfNotExists();
         }
 
-        const loaded: LoadedModules = {shutdownHooks: []};
+        const loaded: LoadedModules = {shutdownHooks: [], seen: new Set()};
         const {router, routeItems} = await setupRoutes(applicationOptions, loaded);
         await loadAdditionalTsFiles(applicationOptions, routeItems, loaded);
 

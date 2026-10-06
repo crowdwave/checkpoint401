@@ -1,5 +1,5 @@
 {
-  "lock": true,
+  "lock": { "path": "./deno.lock", "frozen": true },
   "tasks": {
     "check": "deno check checkpoint401.ts config/*.ts",
     "lint": "deno lint checkpoint401.ts config/*.ts",
