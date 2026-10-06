@@ -3,13 +3,39 @@ Description=checkpoint401
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/deno run --allow-net=127.0.0.1:3000 --allow-read=/opt/checkpoint401 --allow-env=PORT,LISTEN_ADDRESS --allow-write=/opt/checkpoint401/config/route_stats_counters.db /opt/checkpoint401/checkpoint401.ts
-WorkingDirectory=/opt/checkpoint401/config
+# Code lives read-only under /opt/checkpoint401. The stats database and the
+# Deno module cache live in systemd-managed state/cache directories, so the
+# config directory (your auth code and .env) is never writable by the
+# service. Run `deno task cache` as root in /opt/checkpoint401 once with
+# DENO_DIR=/var/cache/checkpoint401 to pre-populate the cache, or drop
+# --cached-only to let the service fetch on first start.
+#
+# --allow-net lists the listen address AND every host your endpoint
+# functions talk to. The example config needs its Postgres server, and
+# the postgres.js driver reads the standard PG* variables, so those are
+# granted too. Drop them if your config does not use config/db.ts.
+ExecStart=/usr/bin/deno run \
+  --cached-only \
+  --allow-net=127.0.0.1:3000,127.0.0.1:5432 \
+  --allow-read=/opt/checkpoint401,/var/lib/checkpoint401 \
+  --allow-write=/var/lib/checkpoint401 \
+  --allow-env=PORT,LISTEN_ADDRESS,PG* \
+  /opt/checkpoint401/checkpoint401.ts \
+  --config-dir /opt/checkpoint401/config \
+  --db-filename /var/lib/checkpoint401/route_stats_counters.db \
+  --no-error-body
+WorkingDirectory=/opt/checkpoint401
 Restart=always
-User=ubuntu
 Environment=PATH=/usr/bin:/usr/local/bin
+Environment=DENO_DIR=/var/cache/checkpoint401
 
-# Hardening. Adjust ReadWritePaths to point at your --db-filename.
+# Dedicated, unprivileged, transient user. StateDirectory and CacheDirectory
+# are created with the right ownership and are the only writable paths.
+DynamicUser=yes
+StateDirectory=checkpoint401
+CacheDirectory=checkpoint401
+
+# Hardening.
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
@@ -18,14 +44,16 @@ PrivateDevices=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes
-RestrictAddressFamilies=AF_INET AF_INET6
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 RestrictNamespaces=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=no
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
 SystemCallFilter=~@privileged @resources
-ReadWritePaths=/opt/checkpoint401/config
+# Allow the graceful drain (--shutdown-timeout-ms, default 10s) to finish
+# before systemd escalates to SIGKILL.
+TimeoutStopSec=20
 
 [Install]
 WantedBy=multi-user.target

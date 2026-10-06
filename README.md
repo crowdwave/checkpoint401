@@ -5,13 +5,13 @@
 <b>Checkpoint 401 aims to be the SIMPLEST Forward Auth Security Server to implement and use - this is the primary goal. Checkpoint 401 is written in TypeScript and Deno and you need to write TypeScript code to utilise it in your applications.</b>
 </p>
 
-The entire source is 500 lines of TypeScript code - it is a ten minute read:
+The entire server is a single TypeScript file of under 1000 lines - it is a short read:
 
 https://github.com/crowdwave/checkpoint401/blob/master/checkpoint401.ts
 
 # Checkpoint 401 Forward Auth Security Server
 
-Important May 2024 note: **Checkpoint 401 is aimed at sophisticated TypeScript developers... it is brand new and is not battle-tested.** We recommend you first read the source code in detail and assure yourself of its suitability for your needs - there is only a single source file of about 500 lines - small enough for a skilled TypeScript developer to understand. We welcome code reviews and feedback to improve its reliability and security. Checkpoint 401 has no guarantee at all - use at your own risk.
+Important May 2024 note: **Checkpoint 401 is aimed at sophisticated TypeScript developers... it is brand new and is not battle-tested.** We recommend you first read the source code in detail and assure yourself of its suitability for your needs - there is only a single source file - small enough for a skilled TypeScript developer to understand. We welcome code reviews and feedback to improve its reliability and security. Checkpoint 401 has no guarantee at all - use at your own risk.
 
 ## What is a Forward Auth Server?
 
@@ -36,7 +36,7 @@ Instead of having auth code like spaghetti hairball gumball through your applica
 
 ## Core Concepts of Checkpoint 401
 
-* Checkpoint 401 is written in Typescript and runs on Deno.
+* Checkpoint 401 is written in Typescript and runs on Deno 2.x.
 * Checkpoint 401 aims for simplicity and minimalism - it is easy to understand.
 * Checkpoint 401 requires that you provide a routes.json file to define methods/URL patterns and an endpoint function to run when a request matches.
 * You write the endpoint functions in TypeScript.
@@ -80,7 +80,7 @@ Exploring the code in the config directory will give you an understanding that y
 routes.json: This file defines the routes for the server. It should be a JSON array with each object containing the following properties:
 * method: HTTP method (GET, POST, etc.).
 * routeURLPattern: The route pattern to match to the inbound request url, which must be a URL pattern as defined in the URL Pattern API documented at: https://developer.mozilla.org/en-US/docs/Web/API/URLPattern/URLPattern
-* routeEndpointTypeScriptFile: The filename of the TypeScript endpoint handler located in the current working directory.
+* routeEndpointTypeScriptFile: The flat filename (no directory part) of the TypeScript endpoint handler, located in the config directory (the directory holding routes.json: the current directory, or whatever `--config-dir` points at).
 
 Example routes.json
 
@@ -117,9 +117,13 @@ The filename of your endpoint function must match the routeEndpointTypeScriptFil
 
 Your TypeScript endpoint functions must have a very specific signature to function correctly with Checkpoint 401. The function signature should be:
 
-    type EndpointFunction = (req: Request, match: URLPatternResult | null) => Promise<{ success: boolean; errorMessage?: string; }>;
+    type EndpointFunction = (req: Request, match: URLPatternResult | null, signal?: AbortSignal) => Promise<{ success: boolean; errorMessage?: string; }>;
 
 **Each endpoint function TypeScript file must export a default function that adheres to this signature.**
+
+The third argument is optional. It is an `AbortSignal` that fires when `--endpoint-timeout-ms` elapses. Pass it to `fetch()` or your database client so that a timed-out request also cancels the work behind it; the server has already answered 401 by then, so there is no point letting the query run on.
+
+Anything an endpoint does other than return that object - throw, return the wrong shape, or run past the timeout - is treated as a denial and logged as a single line.
 
 Example endpoint function for anonymous:
 
@@ -145,7 +149,7 @@ Example endpoint Function (config/getUsers.ts):
 
 Another example endpoint function:
 
-    export default async function myAuthEndpointFunction(req: Request, match: URLPatternResult | null): Promise<{ success: boolean; errorMessage?: string; }> {
+    export default async function myAuthEndpointFunction(req: Request, match: URLPatternResult | null, signal?: AbortSignal): Promise<{ success: boolean; errorMessage?: string; }> {
         try {
             // Perform asynchronous operations such as a session lookup
             // against your own user store. Build the URL from values you
@@ -156,7 +160,7 @@ Another example endpoint function:
             const sessionId = getSessionIdFromCookie(req);
             if (!sessionId) return { success: false, errorMessage: 'No session' };
 
-            const response = await fetch(`http://127.0.0.1:5000/sessions/${encodeURIComponent(sessionId)}`);
+            const response = await fetch(`http://127.0.0.1:5000/sessions/${encodeURIComponent(sessionId)}`, { signal });
             if (!response.ok) return { success: false, errorMessage: 'Session lookup failed' };
             const data = await response.json();
 
@@ -206,11 +210,18 @@ This is an example of how you can use the match object to get values from the in
 
 ## Additional TypeScript Files
 
-When the Checkpoint 401 server starts, it imports all the TypeScript files in the current working directory. This means you can import additional TypeScript files beyond the endpoint functions for the routes. These additional TypeScript files can contain any valid TypeScript code you want.
+When the Checkpoint 401 server starts, it imports all the TypeScript files in the config directory. This means you can import additional TypeScript files beyond the endpoint functions for the routes. These additional TypeScript files can contain any valid TypeScript code you want.
 
 Have a look in the config directory of this repository for an example of how to use additional TypeScript files.
 
 You will find there files that do things like process cookies and access a database to look up user details.
+
+Two rules for config modules:
+
+* **Do not install signal handlers or call `Deno.exit()`.** The server owns process shutdown. A module that exits on SIGTERM races the server's graceful shutdown and loses in-flight responses and the final stats flush.
+* **Export `onShutdown` if you hold resources.** Any loaded module may export `onShutdown(): Promise<void> | void`. The server awaits every hook during graceful shutdown, after in-flight requests have drained and counters are flushed, and before it exits. See `config/db.ts`, which closes its Postgres pool this way.
+
+The example config reads `JWT_SECRET` and `DATABASE_URL` from `config/.env`. Copy `config/.env.example` to `config/.env` and fill it in. `.env` is gitignored; never commit it.
 
 ## Overview of how a request is handled:
 
@@ -218,8 +229,8 @@ You will find there files that do things like process cookies and access a datab
 * Forward Auth: NGINX/Caddy forwards the request to the Checkpoint 401 server.
 * Checkpoint 401: The request is processed by Checkpoint 401, which runs the appropriate route handler (e.g., getUsers.ts).
 * Route Handler: The handler function checks the request and returns true or false.
-* Decision: Checkpoint 401 returns a 200 OK response if the request is allowed, or a 401 Deny response if it is denied. The only other status values that Checkpoint 401 can return is 404 and 500.
-* Response to NGINX/Caddy: The decision is sent back to NGINX/Caddy as an HTTP status code, 200 is approved, 401 is denied, 404 is not found and 500 is server error.
+* Decision: Checkpoint 401 returns a 200 OK response if the request is allowed, or a 401 Deny response if it is denied. The only other status values that Checkpoint 401 can return are 404 (no route matched) and 503 (over the `--max-in-flight` limit). Missing or malformed forwarded headers, and anything that escapes a handler, are answered with 401.
+* Response to NGINX/Caddy: The decision is sent back to NGINX/Caddy as an HTTP status code. Only 200 means approved.
 * NGINX/Caddy Decision: NGINX/Caddy forwards the request to the application server only if an HTTP status 200 was returned from the forward auth server.
 
 ## Why Use a Forward Auth Server?
@@ -244,7 +255,7 @@ You will find there files that do things like process cookies and access a datab
 ## Usage instructions
 
 **Install Deno:**
-If you don't have Deno installed, follow the instructions on the official Deno website.
+Checkpoint 401 requires Deno 2.x. If you don't have Deno installed, follow the instructions on the official Deno website. All dependencies are pinned to exact versions in the source and in `deno.lock`; run `deno task cache` once to download and verify them.
 
 **Create a Configuration Directory:**
 Create a directory named config and place your routes.json file and endpoint TypeScript files in this directory.
@@ -256,9 +267,15 @@ Change your current working directory to config and run the server:
     deno run \
       --allow-net=127.0.0.1:3000 \
       --allow-read=. \
+      --allow-write=. \
       --allow-env=PORT,LISTEN_ADDRESS \
-      --allow-write=route_stats_counters.db \
       ../checkpoint401.ts
+
+`--allow-write` must cover the **directory** that holds the stats
+database, not just the database file: SQLite creates journal files
+beside it, and a file-scoped grant fails at startup. If you don't want
+the stats feature, pass `--disable-stats` and drop `--allow-write`
+entirely; no database is opened.
 
 The unscoped form (`--allow-net --allow-read --allow-env --allow-write`)
 also works but grants the process arbitrary outbound network access,
@@ -266,22 +283,35 @@ read access to the entire filesystem, and write access to the entire
 filesystem. Prefer the scoped form above. Adjust the values to match
 your `--port`, `--listen-address`, and `--db-filename` if you change
 them, and add any additional env vars or hosts your endpoint functions
-need.
+need. The example config connects to Postgres, so to run it you must
+add the database host to `--allow-net`, for example
+`--allow-net=127.0.0.1:3000,127.0.0.1:5432`, and let the driver read its
+standard `PG*` variables (it consults them even when the connection URL
+is complete; Deno 2 accepts a trailing wildcard):
+
+    --allow-env=PORT,LISTEN_ADDRESS,PG*
 
 ## Command-Line Arguments
 
 Checkpoint 401 has several optional command-line arguments:
 
-- `--config-dir <config-dir>`: Path to the directory containing configuration files (default: .).
-- `--db-filename <database_path>`: Path to the SQLite database file (default: route_stats_counters.db).
-- `--update-period <update_period_in_milliseconds>`: Period in milliseconds to update the database and write counters to disk (default: 10000).
-- `--disable-stats`: Disable the stats feature.
+- `--config-dir <config-dir>`: Directory containing routes.json, the endpoint files and any helper .ts files (default: the current directory).
+- `--db-filename <database_path>`: Path to the SQLite stats database (default: route_stats_counters.db in the current directory). Its directory must be writable.
+- `--update-period <update_period_in_milliseconds>`: Period in milliseconds to flush counters to the database (default: 10000).
+- `--disable-stats`: Disable the stats feature entirely. No database is opened or created.
+- `--verbose`: Log one line per request: status, method, matched pattern and request path. The query string is never logged. Off by default.
+- `--quiet`: The default; kept for compatibility.
 - `--version`: Display server version.
 - `--help`: Show help message.
-- `--port <port_number>`: Port number to listen on (default: 3000 or PORT environment variable).
-- `--listen-address <listen_address>`: Address to listen on (default: 127.0.0.1 or LISTEN_ADDRESS environment variable). Bind to 0.0.0.0 only if you have a network ACL or shared-secret in front; the server treats inbound headers as trusted.
+- `--port <port_number>`: Port number to listen on (default: 3000 or PORT environment variable). Setting both is an error.
+- `--listen-address <listen_address>`: Address to listen on (default: 127.0.0.1 or LISTEN_ADDRESS environment variable). Setting both is an error. Bind to 0.0.0.0 only if you have a network ACL or shared-secret in front; the server treats inbound headers as trusted.
 - `--header-name-uri <header_name>`: The name of the header that contains the URI of the inbound request (default: X-Forwarded-Uri).
 - `--header-name-method <header_name>`: The name of the header that contains the method of the inbound request (default: X-Forwarded-Method).
+- `--strict-uri` / `--no-strict-uri`: Strict mode is **on by default**. It rejects (with 401) any forwarded URI that is not a plain `/`-prefixed path: absolute or protocol-relative URLs, backslashes, `.` or `..` segments, fragments, control bytes, and percent-encoded forms of any of those (`%2e`, `%2f`, `%5c`, `%23`, `%00`-`%1f`, `%7f`). The URL parser used for route matching normalises all of these, while your backend may not, so authorising on the normalised form would be authorising a different request than the one the backend serves. Only turn this off if your proxy sends something other than a plain request path and you have checked that your backend parses paths the same way.
+- `--no-error-body`: Do not include the endpoint's errorMessage in 401 response bodies. Recommended if your reverse proxy forwards the auth response body to clients, since distinct error strings can enable user enumeration.
+- `--endpoint-timeout-ms <ms>`: Maximum time an endpoint function may run before the request is denied and the endpoint's AbortSignal fires (default: 10000). 0 disables.
+- `--shutdown-timeout-ms <ms>`: On SIGTERM or SIGINT, how long to wait for in-flight requests to finish before flushing counters and exiting anyway (default: 10000). A second signal exits immediately.
+- `--max-in-flight <n>`: Maximum number of requests being evaluated concurrently (default: 1024). Requests above the limit receive 503 without any endpoint code running. 0 disables.
 
 The `--header-name-uri` and `--header-name-method` arguments are particularly important as they define the headers that Checkpoint 401 will use to pass the URI and method of the inbound request to your endpoint function. The exact headers used can differ between Nginx/Caddy/Traefik and are also configurable by you in your web server setup.
 
@@ -320,10 +350,12 @@ The following ASCII diagram illustrates what Checkpoint 401 does when it starts 
 
 **Overview of Server Logic**
 
-* Read Configuration: Checkpoint 401 reads the routes.json file to get the route configurations.
-* Import TypeScript Files: It imports all the TypeScript files in the config directory. This allows you to include additional TypeScript files beyond the endpoint functions.
+* Read Configuration: Checkpoint 401 reads the routes.json file to get the route configurations. Duplicate method/pattern pairs are rejected, since the later entry could never be reached.
+* Import TypeScript Files: It imports all the TypeScript files in the config directory. This allows you to include additional TypeScript files beyond the endpoint functions. A file that fails to import stops startup.
 * Setup Routes: It sets up the routes from routes.json.
 * Start HTTP Server: Finally, it starts the HTTP server, which listens on the specified port.
+
+On SIGTERM or SIGINT the server stops accepting connections, waits up to `--shutdown-timeout-ms` for in-flight requests, flushes the counters, runs every module's `onShutdown` hook, closes the database and exits. A second signal exits at once.
 
 This concludes the full document for Checkpoint 401 Forward Auth Server.
 
@@ -340,7 +372,6 @@ This concludes the full document for Checkpoint 401 Forward Auth Server.
     
             # Define the behavior when access is denied
             error_page 401 = @error401;
-            error_page 403 = @error403;
     
             # The actual resource
             proxy_pass http://backend;
@@ -349,6 +380,12 @@ This concludes the full document for Checkpoint 401 Forward Auth Server.
         location = /auth {
             internal;  # This location should not be accessed directly by clients
             proxy_pass http://auth_service;  # The authentication service
+
+            # auth_request subrequests must not carry the client's body.
+            # Without these two lines nginx forwards the original
+            # Content-Length with no body and the auth request stalls.
+            proxy_pass_request_body off;
+            proxy_set_header Content-Length "";
     
             # Pass the necessary headers to the authentication service.
             # The header names below match the Checkpoint 401 defaults
@@ -360,13 +397,11 @@ This concludes the full document for Checkpoint 401 Forward Auth Server.
             proxy_set_header X-Forwarded-For $remote_addr;
         }
     
-        # Define the error handler locations
+        # Checkpoint 401 answers 200, 401, 404 or 503. nginx turns every
+        # non-200 auth response into a 401 (or 500 for 5xx), so this is the
+        # only error handler needed.
         location @error401 {
             return 401 'Unauthorized';
-        }
-    
-        location @error403 {
-            return 403 'Forbidden';
         }
     }
 
