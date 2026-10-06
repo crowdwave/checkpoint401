@@ -1,6 +1,6 @@
 import {verify} from "jsr:@zaubrik/djwt@3.0.2";
 import {env} from "./env.ts";
-import {JwtSecretNotSetError, MissingJwtTokenError, NoCookiesFoundError, rethrowCatchInAuth} from "./customErrors.ts";
+import {InvalidJwtTokenError, JwtSecretNotSetError, MissingJwtTokenError, NoCookiesFoundError, rethrowCatchInAuth} from "./customErrors.ts";
 
 interface DecodedToken {
     id?: unknown;
@@ -30,7 +30,15 @@ export async function checkCookieIsValidReturningUserId(req: Request): Promise<s
         const jwtCookie = cookies.split(/;\s*/).find((c) => c.startsWith("token="));
         if (!jwtCookie) throw new MissingJwtTokenError();
         const token = jwtCookie.slice(jwtCookie.indexOf("=") + 1);
-        const decoded = await verify(token, await hmacKeyPromise) as DecodedToken;
+        let decoded: DecodedToken;
+        try {
+            decoded = await verify(token, await hmacKeyPromise) as DecodedToken;
+        } catch {
+            // djwt's own Error types are not "known" errors; map them so a
+            // garbage cookie from an anonymous caller does not trip the
+            // ALERT DEVELOPERS log line.
+            throw new InvalidJwtTokenError();
+        }
         // Defensive expiry / not-before check. djwt rejects expired and
         // not-yet-valid tokens, but only when the claims are present;
         // require exp so a token without one can't be valid forever.

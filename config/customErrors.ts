@@ -3,6 +3,7 @@ export const knownErrorNames: string[] = [
     "InvalidUrlError",
     "JwtSecretNotSetError",
     "MissingJwtTokenError",
+    "InvalidJwtTokenError",
     "NoCookiesFoundError",
     "UnknownAuthError",
     "UserNotAMemberOfChannelError",
@@ -106,3 +107,10 @@ export class UserIsNotSignedInError extends Error {
     }
 }
 
+
+export class InvalidJwtTokenError extends Error {
+    constructor() {
+        super("Unauthorized: JWT token in cookie failed verification");
+        this.name = "InvalidJwtTokenError";
+    }
+}
