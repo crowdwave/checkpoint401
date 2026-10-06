@@ -68,9 +68,13 @@ function errName(error: unknown): string {
 // database error quoting a bad parameter, for instance), and the
 // forwarded URI alone may be 8KB.
 const MAX_LOG_FIELD = 512;
-function sanitizeForLog(s: string): string {
-    const cleaned = s.replace(/[\x00-\x1f\x7f]/g, "?");
-    return cleaned.length > MAX_LOG_FIELD ? cleaned.slice(0, MAX_LOG_FIELD) + "...[truncated]" : cleaned;
+function sanitizeForLog(s: string, max = MAX_LOG_FIELD): string {
+    // Stack traces keep their newlines (max > MAX_LOG_FIELD callers);
+    // everything else is forced onto one line.
+    const cleaned = max > MAX_LOG_FIELD
+        ? s.replace(/[\x00-\x09\x0b-\x1f\x7f]/g, "?")
+        : s.replace(/[\x00-\x1f\x7f]/g, "?");
+    return cleaned.length > max ? cleaned.slice(0, max) + "...[truncated]" : cleaned;
 }
 
 class DatabaseManager {
@@ -99,10 +103,38 @@ class DatabaseManager {
         console.log("Table route_stats_counters created or already exists.");
     }
 
+    // Methods are stored uppercased since v5. Databases written by
+    // earlier versions may hold rows keyed by the method exactly as it
+    // appeared in routes.json (e.g. 'get'); fold those into the
+    // uppercase row so historical counts are not orphaned.
+    migrateMethodCase() {
+        this.db.query("BEGIN");
+        try {
+            this.db.query(`
+                INSERT OR IGNORE INTO route_stats_counters (method, route, passCount, failCount)
+                SELECT UPPER(method), route, 0, 0 FROM route_stats_counters WHERE method != UPPER(method)
+            `);
+            this.db.query(`
+                UPDATE route_stats_counters
+                SET passCount = passCount + (SELECT COALESCE(SUM(l.passCount), 0) FROM route_stats_counters l
+                                             WHERE l.route = route_stats_counters.route AND UPPER(l.method) = route_stats_counters.method AND l.method != route_stats_counters.method),
+                    failCount = failCount + (SELECT COALESCE(SUM(l.failCount), 0) FROM route_stats_counters l
+                                             WHERE l.route = route_stats_counters.route AND UPPER(l.method) = route_stats_counters.method AND l.method != route_stats_counters.method)
+                WHERE method = UPPER(method)
+            `);
+            this.db.query("DELETE FROM route_stats_counters WHERE method != UPPER(method)");
+            this.db.query("COMMIT");
+        } catch (error) {
+            this.db.query("ROLLBACK");
+            throw error;
+        }
+    }
+
     insertInitialStats(routes: RouteItem[]) {
         // Propagates failure for the same reason as createTableIfNotExists:
         // if the rows don't exist, every later UPDATE silently matches
         // nothing and the stats feature is broken without any signal.
+        this.migrateMethodCase();
         const insertStmt = `
             INSERT OR IGNORE INTO route_stats_counters (method, route, passCount, failCount)
             VALUES (?, ?, 0, 0)
@@ -309,26 +341,6 @@ function flushCounters(dbManager: DatabaseManager, routes: RouteItem[]): void {
     }
 }
 
-function updateDatabasePeriodically(
-    dbManager: DatabaseManager,
-    routes: RouteItem[],
-    applicationOptions: ApplicationOptions,
-): TimerId {
-    const {updatePeriod} = applicationOptions;
-    try {
-        flushCounters(dbManager, routes);
-    } catch (error) {
-        console.error('Error updating database:', errMsg(error));
-    }
-    // Schedule the next update after the current one has completed.
-    // Timer ids are returned so shutdown can cancel the chain.
-    return setTimeout(() => {
-        timers.periodicFlush = updateDatabasePeriodically(dbManager, routes, applicationOptions);
-    }, updatePeriod);
-}
-
-const timers: { periodicFlush: TimerId | undefined } = {periodicFlush: undefined};
-
 type ResponseStatus = 200 | 401 | 404 | 503;
 
 const makeResponse = (
@@ -423,6 +435,19 @@ class URLPatternRouter {
     }
 }
 
+// Live evaluations: requests currently being handled plus endpoint
+// invocations that outlived their timeout and are still running. The
+// --max-in-flight cap is applied to this number so that abandoned
+// endpoints keep occupying a slot until they actually settle.
+const concurrency = {live: 0};
+
+// Native error classes signal a bug in endpoint code rather than a
+// deliberate denial; those are worth a stack trace.
+function isProgrammingError(error: unknown): boolean {
+    return error instanceof TypeError || error instanceof RangeError
+        || error instanceof ReferenceError || error instanceof SyntaxError;
+}
+
 // Wraps each endpoint: enforces the return-value contract, applies the
 // execution timeout, keeps the pass/fail counters, and converts every
 // failure mode (throw, bad shape, timeout) into a denial.
@@ -430,6 +455,11 @@ function createEndpointFunctionProxy(fn: EndpointFunction, routeConfig: RouteIte
     return async (req: Request, match: URLPatternResult | null): Promise<EndpointResult> => {
         const controller = new AbortController();
         let timeoutId: TimerId | undefined;
+        let timedOut = false;
+        // Call inside a promise so a synchronous throw is handled the
+        // same way as a rejection, and so the promise exists before the
+        // race for the timeout bookkeeping below.
+        const work: Promise<unknown> = new Promise((resolve) => resolve(fn(req, match, controller.signal)));
         try {
             let result: unknown;
             if (applicationOptions.endpointTimeoutMs > 0) {
@@ -440,13 +470,14 @@ function createEndpointFunctionProxy(fn: EndpointFunction, routeConfig: RouteIte
                 // can cancel their underlying fetch/DB work.
                 const timeoutPromise = new Promise<never>((_, reject) => {
                     timeoutId = setTimeout(() => {
+                        timedOut = true;
                         controller.abort();
                         reject(new Error(`Endpoint timed out after ${applicationOptions.endpointTimeoutMs}ms`));
                     }, applicationOptions.endpointTimeoutMs);
                 });
-                result = await Promise.race([fn(req, match, controller.signal), timeoutPromise]);
+                result = await Promise.race([work, timeoutPromise]);
             } else {
-                result = await fn(req, match, controller.signal);
+                result = await work;
             }
             if (result === null || typeof result !== "object"
                 || typeof (result as EndpointResult).success !== "boolean"
@@ -460,11 +491,25 @@ function createEndpointFunctionProxy(fn: EndpointFunction, routeConfig: RouteIte
             // Every failure mode is a denial and counts as one. Log a
             // single sanitised line rather than a stack trace: an
             // unauthenticated caller can trigger this on every request.
+            // Programming errors (TypeError etc.) are not request-derived
+            // and need their stack to be found, so those get it; so does
+            // everything else under --verbose.
             routeConfig.failCount++;
-            console.error(`[${new Date().toISOString()}] endpoint ${routeConfig.routeEndpointTypeScriptFile} failed: ${sanitizeForLog(errName(error))}: ${sanitizeForLog(errMsg(error))}`);
+            const stamp = new Date().toISOString();
+            console.error(`[${stamp}] endpoint ${routeConfig.routeEndpointTypeScriptFile} failed: ${sanitizeForLog(errName(error))}: ${sanitizeForLog(errMsg(error))}`);
+            if ((isProgrammingError(error) || applicationOptions.verbose) && error instanceof Error && error.stack) {
+                console.error(sanitizeForLog(error.stack, 4000));
+            }
             return {success: false, errorMessage: "Unknown auth error"};
         } finally {
             if (timeoutId !== undefined) clearTimeout(timeoutId);
+            if (timedOut) {
+                // The request is answered, but the endpoint is still
+                // running. Keep it counted against --max-in-flight until
+                // it settles, and swallow its eventual outcome.
+                concurrency.live++;
+                work.then(() => {}, () => {}).finally(() => { concurrency.live--; });
+            }
         }
     };
 }
@@ -473,7 +518,7 @@ function displayHelp() {
     console.log(`
       Server usage:
 
-      checkpoint401 [--config-dir <dir>] [--db-filename <path>] [--update-period <ms>] [--disable-stats] [--verbose] [--quiet] [--version] [--help] [--port <n>] [--listen-address <addr>] [--header-name-uri <name>] [--header-name-method <name>] [--strict-uri] [--no-strict-uri] [--no-error-body] [--endpoint-timeout-ms <ms>] [--shutdown-timeout-ms <ms>] [--max-in-flight <n>]
+      checkpoint401 [--config-dir <dir>] [--db-filename <path>] [--update-period <ms>] [--disable-stats] [--verbose] [--quiet] [--version] [--help] [--port <n>] [--listen-address <addr>] [--header-name-uri <name>] [--header-name-method <name>] [--strict-uri] [--no-strict-uri] [--allow-encoded-path] [--no-error-body] [--endpoint-timeout-ms <ms>] [--shutdown-timeout-ms <ms>] [--max-in-flight <n>]
 
       --config-dir: Directory containing routes.json, the endpoint files and any helper .ts files (default: current directory)
       --db-filename: Path to the SQLite stats database (default: route_stats_counters.db in the current directory). The DIRECTORY must be writable: SQLite creates journal files beside the DB.
@@ -489,6 +534,7 @@ function displayHelp() {
       --header-name-method: Name of the header carrying the original request method (default: X-Forwarded-Method)
       --strict-uri: Reject inbound URI values that are not '/'-prefixed paths, start with '//', or contain backslashes, dot segments, '#', control bytes, or percent-encoded forms of any of those. ON by default; this flag is accepted for compatibility.
       --no-strict-uri: Turn the above off. Only do this if your proxy sends something other than a plain request path and you understand the parser-differential risk.
+      --allow-encoded-path: Keep strict mode but permit percent-encoded '/', '\\', '#' and '%' in path segments, for backends whose routes legitimately carry them (e.g. 'group%2Fproject' ids). Only enable it if you have confirmed your backend does not decode and re-split the path. Encoded control bytes and '%2e' stay refused.
       --no-error-body: Do not include the endpoint's errorMessage in 401 response bodies. Off by default. Recommended if your reverse proxy forwards the auth response body to clients or error pages, since distinct error strings can enable user enumeration.
       --endpoint-timeout-ms: Maximum time (ms) an endpoint function may run before the request is failed-closed (returned as 401) and the endpoint's AbortSignal fires (default: 10000). 0 disables.
       --shutdown-timeout-ms: On SIGTERM/SIGINT, how long (ms) to wait for in-flight requests to drain before flushing counters and exiting anyway (default: 10000). A second signal exits immediately.
@@ -504,7 +550,7 @@ function displayHelp() {
       - <config-dir>/<file_name>.ts: Each endpoint TypeScript file must export a default async function with signature:
           (req: Request, match: URLPatternResult | null, signal?: AbortSignal) => Promise<{ success: boolean; errorMessage?: string }>
         Any other .ts file in the config directory is also imported on startup so endpoints can share helpers.
-        Any loaded module may export 'onShutdown(): Promise<void> | void'; it is awaited during graceful shutdown. Modules must not install signal handlers or call Deno.exit().
+        An endpoint file or a top-level .ts file in the config directory may export 'onShutdown(): Promise<void> | void'; it is awaited during graceful shutdown. Files in subdirectories are not scanned, so put hooks in top-level files. Modules must not install signal handlers or call Deno.exit().
   `);
 }
 
@@ -519,6 +565,7 @@ interface ApplicationOptions {
     headerNameUri: string;
     headerNameMethod: string;
     strictUri: boolean;
+    allowEncodedPath: boolean;
     suppressErrorBody: boolean;
     endpointTimeoutMs: number; // 0 disables the timeout.
     shutdownTimeoutMs: number;
@@ -543,6 +590,7 @@ function parseArgs(args: string[]): ApplicationOptions {
         headerNameUri: "X-Forwarded-Uri",
         headerNameMethod: "X-Forwarded-Method",
         strictUri: true,
+        allowEncodedPath: false,
         suppressErrorBody: false,
         endpointTimeoutMs: 10000,
         shutdownTimeoutMs: 10000,
@@ -556,20 +604,20 @@ function parseArgs(args: string[]): ApplicationOptions {
         Deno.exit(1);
     }
 
-    function parseInteger(flag: string, raw: string, min: number, max: number): number {
+    function parseInteger(source: string, raw: string, min: number, max: number): number {
         // Number() accepts "3000.5", "0x1000", " 3000 " and "1e3"; a
         // port or millisecond count should be a plain decimal integer.
         if (!/^\d+$/.test(raw)) {
-            fail(`${flag} requires a plain decimal integer, got '${raw}'.`);
+            fail(`${source} requires a plain decimal integer, got '${raw}'.`);
         }
         const parsed = Number(raw);
         if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
-            fail(`${flag} must be between ${min} and ${max}, got '${raw}'.`);
+            fail(`${source} must be between ${min} and ${max}, got '${raw}'.`);
         }
         return parsed;
     }
 
-    const validatePort = (raw: string) => parseInteger("--port", raw, 1, 65535);
+    const validatePort = (raw: string, source = "--port") => parseInteger(source, raw, 1, 65535);
 
     let portFromCli = false;
     let hostnameFromCli = false;
@@ -610,6 +658,9 @@ function parseArgs(args: string[]): ApplicationOptions {
             case "--no-strict-uri":
                 applicationOptions.strictUri = false;
                 noStrictFromCli = true;
+                break;
+            case "--allow-encoded-path":
+                applicationOptions.allowEncodedPath = true;
                 break;
             case "--no-error-body":
                 applicationOptions.suppressErrorBody = true;
@@ -680,7 +731,7 @@ function parseArgs(args: string[]): ApplicationOptions {
     if (hostnameFromCli && envhostname) fail("Both command-line argument and environment variable are set for listen address.");
 
     // If only environment variables are set, apply them
-    if (!portFromCli && envPort) applicationOptions.port = validatePort(envPort);
+    if (!portFromCli && envPort) applicationOptions.port = validatePort(envPort, "PORT environment variable");
     if (!hostnameFromCli && envhostname) applicationOptions.hostname = envhostname;
 
     if (verboseFromCli && quietFromCli) fail("--verbose and --quiet are mutually exclusive.");
@@ -734,7 +785,7 @@ function printVersion() {
 // authorised the literal form.
 const PERCENT_ENCODED_RISKY = /%(0[0-9a-f]|1[0-9a-f]|7f|2e|2f|5c|23|25)/i;
 
-function validateInboundUri(uri: string): void {
+function validateInboundUri(uri: string, allowEncodedPath: boolean): void {
     if (uri.length === 0 || uri.length > 8192) {
         throw new Error("AUTH: inbound URI is empty or too long");
     }
@@ -759,11 +810,25 @@ function validateInboundUri(uri: string): void {
     if (path.includes("\\")) {
         throw new Error("AUTH: inbound URI path contains a backslash");
     }
-    if (PERCENT_ENCODED_RISKY.test(path)) {
+    if (allowEncodedPath) {
+        // Operator opted in to encoded reserved characters in path
+        // segments (e.g. GitLab-style 'group%2Fproject' ids). Encoded
+        // control bytes are still refused, and so is '%2e': the WHATWG
+        // parser treats '%2e%2e' as a dot segment and resolves it, so
+        // permitting it would reopen the traversal this check exists for.
+        if (/%(0[0-9a-f]|1[0-9a-f]|7f|2e)/i.test(path)) {
+            throw new Error("AUTH: inbound URI path contains a percent-encoded control byte or '.'");
+        }
+    } else if (PERCENT_ENCODED_RISKY.test(path)) {
         throw new Error("AUTH: inbound URI path contains a percent-encoded control byte, '.', '/', '\\', '#' or '%'");
     }
     for (const segment of path.split("/")) {
-        if (segment === "." || segment === "..") {
+        // Servlet containers strip ';param' path parameters from each
+        // segment before normalising, so '..;' is '..' to Tomcat and
+        // Spring while the WHATWG parser leaves it alone. Judge the
+        // segment by what precedes the first ';'.
+        const core = segment.split(";", 1)[0];
+        if (core === "." || core === "..") {
             throw new Error("AUTH: inbound URI path contains a dot segment");
         }
     }
@@ -775,7 +840,7 @@ function patchMethodAndUriIntoRequest(request: Request, applicationOptions: Appl
     const method = getRequiredHeader(request, applicationOptions.headerNameMethod);
     const url = getRequiredHeader(request, applicationOptions.headerNameUri);
     if (applicationOptions.strictUri) {
-        validateInboundUri(url);
+        validateInboundUri(url, applicationOptions.allowEncodedPath);
     }
 
     const handler = {
@@ -817,14 +882,21 @@ async function runServer(): Promise<void> {
         const {router, routeItems} = await setupRoutes(applicationOptions, loaded);
         await loadAdditionalTsFiles(applicationOptions, routeItems, loaded);
 
+        // flushCounters is synchronous, so a plain interval cannot
+        // overlap itself. Cleared on shutdown.
+        let flushInterval: TimerId | undefined;
         if (dbManager) {
             dbManager.insertInitialStats(routeItems);
-            timers.periodicFlush = setTimeout(() => {
-                timers.periodicFlush = updateDatabasePeriodically(dbManager!, routeItems, applicationOptions);
+            const db = dbManager;
+            flushInterval = setInterval(() => {
+                try {
+                    flushCounters(db, routeItems);
+                } catch (error) {
+                    console.error('Error updating database:', errMsg(error));
+                }
             }, applicationOptions.updatePeriod);
         }
 
-        let inFlight = 0;
         const server = Deno.serve(
             {
                 hostname: applicationOptions.hostname,
@@ -838,13 +910,13 @@ async function runServer(): Promise<void> {
                 },
             },
             async (req) => {
-                if (applicationOptions.maxInFlight > 0 && inFlight >= applicationOptions.maxInFlight) {
+                if (applicationOptions.maxInFlight > 0 && concurrency.live >= applicationOptions.maxInFlight) {
                     // Shed load before running any endpoint code. 503 is
                     // still a denial to the proxy, but distinguishable
                     // from a real auth failure in logs and metrics.
                     return makeResponse(503, applicationOptions, req, null);
                 }
-                inFlight++;
+                concurrency.live++;
                 try {
                     let patched: Request;
                     try {
@@ -858,7 +930,7 @@ async function runServer(): Promise<void> {
                     }
                     return await router.handleRequest(patched);
                 } finally {
-                    inFlight--;
+                    concurrency.live--;
                 }
             },
         );
@@ -877,14 +949,14 @@ async function runServer(): Promise<void> {
                 Deno.exit(1);
             }
             console.log(`Received ${signal}; draining in-flight requests (up to ${applicationOptions.shutdownTimeoutMs}ms)...`);
-            if (timers.periodicFlush !== undefined) clearTimeout(timers.periodicFlush);
+            if (flushInterval !== undefined) clearInterval(flushInterval);
             let drainTimer: TimerId | undefined;
             try {
                 await Promise.race([
                     server.shutdown(),
                     new Promise<void>((resolve) => {
                         drainTimer = setTimeout(() => {
-                            console.error(`Drain timed out after ${applicationOptions.shutdownTimeoutMs}ms with ${inFlight} request(s) still in flight; continuing shutdown.`);
+                            console.error(`Drain timed out after ${applicationOptions.shutdownTimeoutMs}ms with ${concurrency.live} evaluation(s) still live; continuing shutdown.`);
                             resolve();
                         }, applicationOptions.shutdownTimeoutMs);
                     }),

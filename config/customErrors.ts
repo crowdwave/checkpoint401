@@ -11,15 +11,25 @@ export const knownErrorNames: string[] = [
     "UserIsNotSignedInError",
 ];
 
+// One line, control characters stripped, length bounded: these log
+// sites are reachable by unauthenticated callers and must be neither a
+// log-forging nor a log-flooding vector. (Config modules cannot import
+// the server's own helper without running the server.)
+const MAX_LOG_FIELD = 512;
+export function logSafe(s: string): string {
+    const cleaned = s.replace(/[\x00-\x1f\x7f]/g, "?");
+    return cleaned.length > MAX_LOG_FIELD ? cleaned.slice(0, MAX_LOG_FIELD) + "...[truncated]" : cleaned;
+}
+
+export function describeError(error: unknown): string {
+    return error instanceof Error ? `${error.name} - ${error.message}` : `${typeof error} - ${String(error)}`;
+}
+
 export function rethrowCatchInAuth(error: unknown): never {
     if (error instanceof Error && knownErrorNames.includes(error.name)) {
         throw error;
     } else {
-        const name = error instanceof Error ? error.name : typeof error;
-        const message = error instanceof Error ? error.message : String(error);
-        // Single line, control characters stripped: this is reachable by
-        // unauthenticated callers and must not be a log-forging vector.
-        console.error(`ALERT DEVELOPERS! ERROR WAS NOT IN KNOWN ERRORS: ${name} - ${message}`.replace(/[\x00-\x1f\x7f]/g, "?"));
+        console.error(`ALERT DEVELOPERS! ERROR WAS NOT IN KNOWN ERRORS: ${logSafe(describeError(error))}`);
         throw new UnknownAuthError();
     }
 }
@@ -85,7 +95,7 @@ export class InternalApplicationError extends Error {
         super("Internal application error");
         this.name = "InternalApplicationError";
         // this should not happen in production
-        console.error(`InternalApplicationError ALERT DEVELOPERS! - ${info}`.replace(/[\x00-\x1f\x7f]/g, "?"));
+        console.error(`InternalApplicationError ALERT DEVELOPERS! - ${logSafe(info)}`);
     }
 }
 
