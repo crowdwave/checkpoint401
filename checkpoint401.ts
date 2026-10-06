@@ -1,34 +1,71 @@
-import {DB} from "https://deno.land/x/sqlite@v3.8/mod.ts";
+import {DB} from "https://deno.land/x/sqlite@v3.9.1/mod.ts";
+import {join, resolve, toFileUrl} from "jsr:@std/path@1.1.6";
 
-const VERSION: number = 4;
+const VERSION: number = 5;
 
 /*
-to run:
+Requires Deno 2.x.
+
+to run (from inside your config directory, with the stats DB kept there):
+cd config
 deno run \
   --allow-net=127.0.0.1:3000 \
   --allow-read=. \
+  --allow-write=. \
   --allow-env=PORT,LISTEN_ADDRESS \
-  --allow-write=route_stats_counters.db \
-  checkpoint401.ts --db-filename my_database.db
+  ../checkpoint401.ts
+
+Note that --allow-write must cover the DIRECTORY holding the stats DB,
+not just the DB file: SQLite also creates journal files beside it.
+Pass --disable-stats to need no write permission at all.
 
 to compile:
 deno compile checkpoint401.ts
-
-to run:
-./checkpoint401
 
 Run with --help for the full list of flags. The set is also documented
 in displayHelp() below; both must be kept in sync with parseArgs().
  */
 
-type EndpointFunction = (req: Request, match: URLPatternResult | null) => Promise<{ success: boolean; errorMessage?: string; }>;
+// Third argument is an AbortSignal that fires when --endpoint-timeout-ms
+// elapses. Endpoint functions should pass it to fetch()/DB calls so a
+// timed-out request also cancels the underlying work. It is optional so
+// two-argument endpoints written for earlier versions keep working.
+type TimerId = ReturnType<typeof setTimeout>;
+
+type EndpointResult = { success: boolean; errorMessage?: string; };
+type EndpointFunction = (req: Request, match: URLPatternResult | null, signal?: AbortSignal) => Promise<EndpointResult>;
+
+// Any module loaded from the config directory may export this. It is
+// awaited during graceful shutdown, after in-flight requests drain and
+// before the process exits, so helpers can close DB pools etc. Modules
+// must NOT install their own signal handlers or call Deno.exit().
+type ShutdownHook = () => void | Promise<void>;
 
 interface RouteItem {
     method: string;
     routeURLPattern: string;
     routeEndpointTypeScriptFile: string;
-    passCount?: number;
-    failCount?: number;
+    passCount: number;
+    failCount: number;
+}
+
+function errMsg(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    return String(error);
+}
+
+function errName(error: unknown): string {
+    if (error instanceof Error) return error.name;
+    return typeof error;
+}
+
+// Replace any control character that could break log line framing
+// (CR, LF, NUL, plus other C0 controls) with a safe placeholder.
+// Anything containing these in a log line would otherwise let a
+// caller forge fake log entries by injecting the bytes into the
+// inbound URI or method header.
+function sanitizeForLog(s: string): string {
+    return s.replace(/[\x00-\x1f\x7f]/g, "?");
 }
 
 class DatabaseManager {
@@ -38,7 +75,7 @@ class DatabaseManager {
         this.db = new DB(dbFilename);
     }
 
-    async createTableIfNotExists() {
+    createTableIfNotExists() {
         // Propagate failure rather than swallowing it: if the stats
         // table can't be created (read-only filesystem, locked DB,
         // disk full) the server is in a broken state and should fail
@@ -57,23 +94,21 @@ class DatabaseManager {
         console.log("Table route_stats_counters created or already exists.");
     }
 
-    async insertInitialStats(routes: RouteItem[]) {
+    insertInitialStats(routes: RouteItem[]) {
+        // Propagates failure for the same reason as createTableIfNotExists:
+        // if the rows don't exist, every later UPDATE silently matches
+        // nothing and the stats feature is broken without any signal.
         const insertStmt = `
             INSERT OR IGNORE INTO route_stats_counters (method, route, passCount, failCount)
             VALUES (?, ?, 0, 0)
         `;
-
-        try {
-            for (const routeConfig of routes) {
-                this.db.query(insertStmt, [routeConfig.method, routeConfig.routeURLPattern]);
-            }
-            console.log("Initial stats inserted into database.");
-        } catch (error) {
-            console.error("Error inserting initial stats:", error);
+        for (const routeConfig of routes) {
+            this.db.query(insertStmt, [routeConfig.method, routeConfig.routeURLPattern]);
         }
+        console.log("Initial stats inserted into database.");
     }
 
-    async updateDatabase(routes: RouteItem[]) {
+    updateDatabase(routes: RouteItem[]) {
         const updateStmt = `
             UPDATE route_stats_counters
             SET passCount = passCount + ?,
@@ -87,19 +122,14 @@ class DatabaseManager {
         // committing a partial flush. Re-throw on failure so the
         // caller can fold the snapshot back into the in-memory
         // counters and try again on the next tick.
+        this.db.query("BEGIN");
         try {
-            this.db.query("BEGIN");
-            try {
-                for (const routeConfig of routes) {
-                    this.db.query(updateStmt, [routeConfig.passCount, routeConfig.failCount, routeConfig.method, routeConfig.routeURLPattern]);
-                }
-                this.db.query("COMMIT");
-            } catch (error) {
-                this.db.query("ROLLBACK");
-                throw error;
+            for (const routeConfig of routes) {
+                this.db.query(updateStmt, [routeConfig.passCount, routeConfig.failCount, routeConfig.method, routeConfig.routeURLPattern]);
             }
+            this.db.query("COMMIT");
         } catch (error) {
-            console.error("Error updating database:", error);
+            this.db.query("ROLLBACK");
             throw error;
         }
     }
@@ -109,181 +139,201 @@ class DatabaseManager {
     }
 }
 
-async function loadAdditionalTsFiles(applicationOptions: ApplicationOptions): Promise<void> {
-    try {
-        const routesJson = await Deno.readTextFile(`${applicationOptions.currentWorkingDir}/routes.json`);
-        const routes = JSON.parse(routesJson);
-        const excludeFiles = new Set(routes.map((route: { routeEndpointTypeScriptFile: string }) => route.routeEndpointTypeScriptFile));
+interface LoadedModules {
+    shutdownHooks: Array<{ name: string; hook: ShutdownHook }>;
+}
 
-        const directory = await Deno.readDir(applicationOptions.currentWorkingDir);
-        console.log(`Importing non-router TypeScript files from ${applicationOptions.currentWorkingDir}`);
-        let totalImported = 0;
-        for await (const dirEntry of directory) {
-            if (dirEntry.isFile && dirEntry.name.endsWith('.ts') && !excludeFiles.has(dirEntry.name)) {
-                try {
-                    const filePath = `${applicationOptions.currentWorkingDir}/${dirEntry.name}`;
-                    await import(filePath);
-                    totalImported++
-                    console.log(`File ${filePath} loaded successfully.`);
-                } catch (error) {
-                    console.error(`Error importing non-router file '${dirEntry.name}': ${error.message}`);
-                }
-            }
-        }
-        if (totalImported === 0) {
-            console.log(`No non-router TypeScript files found in ${applicationOptions.currentWorkingDir}`);
-        }
-
-    } catch (error) {
-        console.error(`Error loading non-router TypeScript files: ${error}`);
-        Deno.exit(1);
+function collectShutdownHook(module: Record<string, unknown>, name: string, loaded: LoadedModules) {
+    if (typeof module.onShutdown === "function") {
+        loaded.shutdownHooks.push({name, hook: module.onShutdown as ShutdownHook});
     }
 }
 
+async function importConfigFile(configDir: string, fileName: string): Promise<Record<string, unknown>> {
+    // Build a file: URL from the absolute config-dir path so the import
+    // resolves against the CONFIG directory, never against this script's
+    // location or the process cwd (which differ under --config-dir).
+    const url = toFileUrl(join(configDir, fileName)).href;
+    return await import(url);
+}
+
+async function loadAdditionalTsFiles(
+    applicationOptions: ApplicationOptions,
+    routeItems: RouteItem[],
+    loaded: LoadedModules,
+): Promise<void> {
+    const excludeFiles = new Set(routeItems.map((route) => route.routeEndpointTypeScriptFile));
+    const directory = Deno.readDir(applicationOptions.configDir);
+    console.log(`Importing non-router TypeScript files from ${applicationOptions.configDir}`);
+    let totalImported = 0;
+    for await (const dirEntry of directory) {
+        if (dirEntry.isFile && dirEntry.name.endsWith('.ts') && !excludeFiles.has(dirEntry.name)) {
+            try {
+                const module = await importConfigFile(applicationOptions.configDir, dirEntry.name);
+                collectShutdownHook(module, dirEntry.name, loaded);
+                totalImported++;
+                console.log(`File ${dirEntry.name} loaded successfully.`);
+            } catch (error) {
+                // A helper that fails to import means some endpoint will
+                // misbehave at request time. Fail fast at startup instead.
+                throw new Error(`Error importing non-router file '${dirEntry.name}': ${errMsg(error)}`);
+            }
+        }
+    }
+    if (totalImported === 0) {
+        console.log(`No non-router TypeScript files found in ${applicationOptions.configDir}`);
+    }
+}
+
+function parseRoutesJson(routesJson: string): RouteItem[] {
+    const parsed: unknown = JSON.parse(routesJson);
+    if (!Array.isArray(parsed)) {
+        throw new Error("routes.json must be a JSON array of route objects.");
+    }
+    if (parsed.length === 0) {
+        console.warn("WARNING: routes.json is empty. Every request will receive 404 (deny). Add at least one route to enable the server.");
+    }
+    const seen = new Set<string>();
+    return parsed.map((entry, index) => {
+        if (entry === null || typeof entry !== "object") {
+            throw new Error(`routes.json entry at index ${index} must be an object.`);
+        }
+        const e = entry as Record<string, unknown>;
+        if (typeof e.method !== "string" || e.method.length === 0) {
+            throw new Error(`routes.json entry at index ${index} is missing required string field 'method'.`);
+        }
+        if (typeof e.routeURLPattern !== "string" || e.routeURLPattern.length === 0) {
+            throw new Error(`routes.json entry at index ${index} is missing required string field 'routeURLPattern'.`);
+        }
+        if (typeof e.routeEndpointTypeScriptFile !== "string" || e.routeEndpointTypeScriptFile.length === 0) {
+            throw new Error(`routes.json entry at index ${index} is missing required string field 'routeEndpointTypeScriptFile'.`);
+        }
+        const endpointFileName = e.routeEndpointTypeScriptFile;
+        // routes.json supplies a flat filename. Reject anything that
+        // could escape the config directory or look like an absolute
+        // path - if routes.json is ever attacker-controlled, this
+        // turns "import the auth function" into "import any .ts on
+        // disk".
+        if (endpointFileName.includes("/") || endpointFileName.includes("\\")
+            || endpointFileName.includes("..") || endpointFileName.includes("\0")) {
+            throw new Error(`Invalid routeEndpointTypeScriptFile '${endpointFileName}' at index ${index}: must be a flat filename in the config directory.`);
+        }
+        // Methods are matched case-insensitively at request time, so
+        // store them uppercased: that keeps the stats DB key consistent
+        // and makes the duplicate check below exact.
+        const method = e.method.toUpperCase();
+        const key = `${method} ${e.routeURLPattern}`;
+        if (seen.has(key)) {
+            // First match wins at request time, so the later entry can
+            // never be reached. Almost certainly a config mistake.
+            throw new Error(`routes.json entry at index ${index} duplicates an earlier route (${key}); the later entry would be unreachable.`);
+        }
+        seen.add(key);
+        return {
+            method,
+            routeURLPattern: e.routeURLPattern,
+            routeEndpointTypeScriptFile: endpointFileName,
+            passCount: 0,
+            failCount: 0,
+        };
+    });
+}
 
 async function setupRoutes(
     applicationOptions: ApplicationOptions,
-    dbManager: DatabaseManager,
+    loaded: LoadedModules,
 ): Promise<{ router: URLPatternRouter; routeItems: RouteItem[] }> {
     try {
-        const routesJson = await Deno.readTextFile(`${applicationOptions.currentWorkingDir}/routes.json`);
-        const parsed: unknown = JSON.parse(routesJson);
-        if (!Array.isArray(parsed)) {
-            throw new Error("routes.json must be a JSON array of route objects.");
-        }
-        if (parsed.length === 0) {
-            console.warn("WARNING: routes.json is empty. Every request will receive 404 (deny). Add at least one route to enable the server.");
-        }
-        let routeItems: RouteItem[] = parsed.map((entry, index) => {
-            if (entry === null || typeof entry !== "object") {
-                throw new Error(`routes.json entry at index ${index} must be an object.`);
-            }
-            const e = entry as Record<string, unknown>;
-            if (typeof e.method !== "string" || e.method.length === 0) {
-                throw new Error(`routes.json entry at index ${index} is missing required string field 'method'.`);
-            }
-            if (typeof e.routeURLPattern !== "string" || e.routeURLPattern.length === 0) {
-                throw new Error(`routes.json entry at index ${index} is missing required string field 'routeURLPattern'.`);
-            }
-            if (typeof e.routeEndpointTypeScriptFile !== "string" || e.routeEndpointTypeScriptFile.length === 0) {
-                throw new Error(`routes.json entry at index ${index} is missing required string field 'routeEndpointTypeScriptFile'.`);
-            }
-            return {
-                method: e.method,
-                routeURLPattern: e.routeURLPattern,
-                routeEndpointTypeScriptFile: e.routeEndpointTypeScriptFile,
-                passCount: 0,
-                failCount: 0,
-            };
-        });
+        const routesJson = await Deno.readTextFile(join(applicationOptions.configDir, "routes.json"));
+        const routeItems = parseRoutesJson(routesJson);
         const urlPatternRouter: URLPatternRouter = new URLPatternRouter(applicationOptions)
         for (const routeConfig of routeItems) {
             const endpointFileName = routeConfig.routeEndpointTypeScriptFile;
-            // routes.json supplies a flat filename. Reject anything that
-            // could escape the config directory or look like an absolute
-            // path - if routes.json is ever attacker-controlled, this
-            // turns "import the auth function" into "import any .ts on
-            // disk".
-            if (typeof endpointFileName !== "string" || endpointFileName.length === 0
-                || endpointFileName.includes("/") || endpointFileName.includes("\\")
-                || endpointFileName.includes("..") || endpointFileName.includes("\0")) {
-                throw new Error(`Invalid routeEndpointTypeScriptFile '${endpointFileName}': must be a flat filename in the config directory.`);
-            }
-            const filePath = `./config/${endpointFileName}`;
             try {
-                const endpointModule = await import(filePath);
-                if (!endpointModule.default) {
-                    throw new Error(`The file '${filePath}' does not export a valid default handler.`);
+                const endpointModule = await importConfigFile(applicationOptions.configDir, endpointFileName);
+                if (typeof endpointModule.default !== "function") {
+                    throw new Error(`The file '${endpointFileName}' does not export a default function.`);
                 }
-                const endpointFunctionProxy = createEndpointFunctionProxy(endpointModule.default, routeConfig, applicationOptions) as EndpointFunction;
+                collectShutdownHook(endpointModule, endpointFileName, loaded);
+                const endpointFunctionProxy = createEndpointFunctionProxy(endpointModule.default as EndpointFunction, routeConfig, applicationOptions);
                 urlPatternRouter.addRoute(routeConfig.method, routeConfig.routeURLPattern, endpointFunctionProxy);
-                console.log(`Loaded route ${routeConfig.method} ${routeConfig.routeURLPattern} -> ${filePath}`);
+                console.log(`Loaded route ${routeConfig.method} ${routeConfig.routeURLPattern} -> ${endpointFileName}`);
             } catch (error) {
-                throw new Error(`Error importing endpoint '${filePath}': ${error.message}`);
+                throw new Error(`Error importing endpoint '${endpointFileName}': ${errMsg(error)}`);
             }
         }
-        await dbManager.insertInitialStats(routeItems);
-        if (!applicationOptions.disableStats) updateDatabasePeriodically(dbManager, routeItems, applicationOptions);
-        return { router: urlPatternRouter, routeItems };
+        return {router: urlPatternRouter, routeItems};
     } catch (error) {
         // Re-throw with a context-prefixed message; runServer's catch
         // is the single layer that logs the failure to stderr, which
         // avoids the double-log we used to produce here.
-        throw new Error(`Failed to set up routes: ${error.message}`);
+        throw new Error(`Failed to set up routes: ${errMsg(error)}`);
     }
 }
 
-async function updateDatabasePeriodically(
+function snapshotAndClear(routes: RouteItem[]): RouteItem[] {
+    // Snapshot then clear before writing, so any increments that
+    // land while the write is in flight are preserved for the next
+    // flush rather than zeroed.
+    const snapshot = routes.map(route => ({...route}));
+    for (const route of routes) {
+        route.passCount = 0;
+        route.failCount = 0;
+    }
+    return snapshot;
+}
+
+function flushCounters(dbManager: DatabaseManager, routes: RouteItem[]): void {
+    const snapshot = snapshotAndClear(routes);
+    try {
+        dbManager.updateDatabase(snapshot);
+    } catch (error) {
+        // The write failed. Fold the snapshot's counts back into
+        // the live counters so they aren't lost - the next flush
+        // will retry.
+        for (let i = 0; i < routes.length; i++) {
+            routes[i].passCount += snapshot[i].passCount;
+            routes[i].failCount += snapshot[i].failCount;
+        }
+        throw error;
+    }
+}
+
+function updateDatabasePeriodically(
     dbManager: DatabaseManager,
     routes: RouteItem[],
     applicationOptions: ApplicationOptions,
-) {
+): TimerId {
     const {updatePeriod} = applicationOptions;
     try {
-        // Validate inside the try so a bad invariant is logged and the
-        // next iteration is still scheduled - otherwise the throw
-        // escapes setTimeout's callback as an unhandled rejection and
-        // the periodic flush silently stops forever.
-        if (!dbManager || !(dbManager instanceof DatabaseManager)) {
-            throw new Error('Invalid dbManager argument. It must be an instance of DatabaseManager.');
-        }
-        if (typeof updatePeriod !== 'number' || updatePeriod <= 0) {
-            throw new Error('Invalid updatePeriod argument. It must be a positive number.');
-        }
-        // Snapshot then clear before writing, so any increments that
-        // land while the write is in flight are preserved for the next
-        // flush rather than zeroed. Today the sqlite query is sync so
-        // this can't happen, but the function is async and would race
-        // if query ever became awaited.
-        const snapshot = routes.map(route => ({
-            method: route.method,
-            routeURLPattern: route.routeURLPattern,
-            passCount: route.passCount ?? 0,
-            failCount: route.failCount ?? 0,
-        })) as RouteItem[];
-        for (const route of routes) {
-            route.passCount = 0;
-            route.failCount = 0;
-        }
-        try {
-            await dbManager.updateDatabase(snapshot);
-        } catch (error) {
-            // The write failed. Fold the snapshot's counts back into
-            // the live counters so they aren't lost - the next flush
-            // will retry. Without this the snapshot data is gone from
-            // memory and never reached the DB.
-            for (let i = 0; i < routes.length; i++) {
-                routes[i].passCount = (routes[i].passCount ?? 0) + (snapshot[i].passCount ?? 0);
-                routes[i].failCount = (routes[i].failCount ?? 0) + (snapshot[i].failCount ?? 0);
-            }
-            throw error;
-        }
+        flushCounters(dbManager, routes);
     } catch (error) {
-        console.error('Error updating database:', error);
-    } finally {
-        // Schedule the next update after the current one has completed
-        setTimeout(() => updateDatabasePeriodically(dbManager, routes, applicationOptions), updatePeriod);
+        console.error('Error updating database:', errMsg(error));
     }
+    // Schedule the next update after the current one has completed.
+    // Timer ids are returned so shutdown can cancel the chain.
+    return setTimeout(() => {
+        timers.periodicFlush = updateDatabasePeriodically(dbManager, routes, applicationOptions);
+    }, updatePeriod);
 }
 
-// Replace any control character that could break log line framing
-// (CR, LF, NUL, plus other C0 controls) with a safe placeholder.
-// Anything containing these in a log line would otherwise let a
-// caller forge fake log entries by injecting the bytes into the
-// inbound URI or method header.
-function sanitizeForLog(s: string): string {
-    return s.replace(/[\x00-\x1f\x7f]/g, "?");
-}
+const timers: { periodicFlush: TimerId | undefined } = {periodicFlush: undefined};
+
+type ResponseStatus = 200 | 401 | 404 | 503;
 
 const makeResponse = (
-    statusCode: 401 | 200 | 404,
+    statusCode: ResponseStatus,
     applicationOptions: ApplicationOptions,
     request: Request,
     URLPatternPathname: string | null,
     errorMessage?: string,
 ): Response => {
     if (applicationOptions.verbose) {
-        console.log(`[${new Date().toISOString()}] status: ${statusCode} method: ${sanitizeForLog(request.method)} pattern: ${URLPatternPathname} request.url: ${sanitizeForLog(request.url)}`);
+        // Log the path only. The query string can carry tokens or PII.
+        const url = request.url;
+        const q = url.indexOf("?");
+        const pathOnly = q === -1 ? url : url.slice(0, q);
+        console.log(`[${new Date().toISOString()}] status: ${statusCode} method: ${sanitizeForLog(request.method)} pattern: ${URLPatternPathname} path: ${sanitizeForLog(pathOnly)}`);
     }
     const includeBody = statusCode === 401 && errorMessage && !applicationOptions.suppressErrorBody;
     const body = includeBody ? JSON.stringify({error: errorMessage}) : null;
@@ -307,20 +357,12 @@ interface RouteEntry {
 // route iteration of every request.
 const URL_PATTERN_BASE = "http://www.example.org";
 
-function getInboundUriFromHeaders(request: Request, headerNameUri: string): string {
-    const xForwardedUri = request.headers.get(headerNameUri);
-    if (xForwardedUri === null) {
-        throw new Error(`AUTH: ${headerNameUri} not found in headers`);
+function getRequiredHeader(request: Request, headerName: string): string {
+    const value = request.headers.get(headerName);
+    if (value === null) {
+        throw new Error(`AUTH: ${headerName} not found in headers`);
     }
-    return xForwardedUri;
-}
-
-function getInboundMethodFromHeaders(request: Request, headerNameMethod: string): string {
-    const xForwardedMethod = request.headers.get(headerNameMethod);
-    if (xForwardedMethod === null) {
-        throw new Error(`AUTH: ${headerNameMethod} not found in headers`);
-    }
-    return xForwardedMethod;
+    return value;
 }
 
 class URLPatternRouter {
@@ -340,7 +382,7 @@ class URLPatternRouter {
         try {
             pattern = new URLPattern({pathname: routeURLPattern});
         } catch (error) {
-            throw new Error(`Invalid routeURLPattern '${routeURLPattern}' for ${method}: ${error.message}`);
+            throw new Error(`Invalid routeURLPattern '${routeURLPattern}' for ${method}: ${errMsg(error)}`);
         }
         this.routes.push(
             {pattern, method: method.toUpperCase(), endpointFunction}
@@ -349,13 +391,12 @@ class URLPatternRouter {
 
     async handleRequest(request: Request) {
         try {
-
             const requestMethod = request.method.toUpperCase();
             for (const route of this.routes) {
                 if (requestMethod !== route.method) continue;
                 const match = route.pattern.exec(request.url, URL_PATTERN_BASE);
                 if (match === null) continue;
-                const result: Awaited<ReturnType<EndpointFunction>> = await route.endpointFunction(request, match);
+                const result = await route.endpointFunction(request, match);
                 if (result.success) {
                     return makeResponse(200, this.applicationOptions, request, route.pattern.pathname);
                 } else {
@@ -364,89 +405,99 @@ class URLPatternRouter {
             }
             return makeResponse(404, this.applicationOptions, request, null);
         } catch (error) {
-            console.error('Error handling request:', error);
+            console.error('Error handling request:', sanitizeForLog(errMsg(error)));
             return makeResponse(401, this.applicationOptions, request, null);
         }
     }
 }
 
-// this wraps the endpoints and ensures only boolean is returned
-function createEndpointFunctionProxy(fn: Function, routeConfig: RouteItem, applicationOptions: ApplicationOptions): EndpointFunction {
-    return new Proxy(fn, {
-        async apply(target, thisArg, argumentsList) {
-            try {
-                let result;
-                if (applicationOptions.endpointTimeoutMs > 0) {
-                    // Race the endpoint against a timeout so a hung
-                    // handler can't tie up a request slot indefinitely.
-                    // Fail-closed: timeout becomes a denied auth.
-                    let timeoutId: number | undefined;
-                    const timeoutPromise = new Promise((_, reject) => {
-                        timeoutId = setTimeout(
-                            () => reject(new Error(`Endpoint timed out after ${applicationOptions.endpointTimeoutMs}ms`)),
-                            applicationOptions.endpointTimeoutMs,
-                        );
-                    });
-                    try {
-                        result = await Promise.race([target(...argumentsList), timeoutPromise]);
-                    } finally {
-                        if (timeoutId !== undefined) clearTimeout(timeoutId);
-                    }
-                } else {
-                    result = await target(...argumentsList);
-                }
-                if (typeof result !== "object" || typeof result.success !== "boolean" || (result.errorMessage && typeof result.errorMessage !== "string")) {
-                    routeConfig.failCount = (routeConfig.failCount || 0) + 1; // Increment fail count
-                    throw new Error(`[${new Date().toISOString()}] YOUR TYPESCRIPT ENDPOINT FUNCTION DID NOT RETURN AN OBJECT WITH A BOOLEAN 'success' PROPERTY AND AN OPTIONAL 'errorMessage' STRING PROPERTY! Method: ${routeConfig.method}, Route: ${routeConfig.routeURLPattern}, File: ${routeConfig.routeEndpointTypeScriptFile}`);
-                }
-                // Update the stats
-                result.success ? (routeConfig.passCount = (routeConfig.passCount || 0) + 1) : (routeConfig.failCount = (routeConfig.failCount || 0) + 1);
-                return result;
-            } catch (error) {
-                console.error(error);
-                return {success: false, errorMessage: "Unknown auth error"};
+// Wraps each endpoint: enforces the return-value contract, applies the
+// execution timeout, keeps the pass/fail counters, and converts every
+// failure mode (throw, bad shape, timeout) into a denial.
+function createEndpointFunctionProxy(fn: EndpointFunction, routeConfig: RouteItem, applicationOptions: ApplicationOptions): EndpointFunction {
+    return async (req: Request, match: URLPatternResult | null): Promise<EndpointResult> => {
+        const controller = new AbortController();
+        let timeoutId: TimerId | undefined;
+        try {
+            let result: unknown;
+            if (applicationOptions.endpointTimeoutMs > 0) {
+                // Race the endpoint against a timeout so a hung handler
+                // can't tie up a request slot indefinitely. Fail-closed:
+                // timeout becomes a denied auth. The AbortSignal handed
+                // to the endpoint is fired too, so cooperative endpoints
+                // can cancel their underlying fetch/DB work.
+                const timeoutPromise = new Promise<never>((_, reject) => {
+                    timeoutId = setTimeout(() => {
+                        controller.abort();
+                        reject(new Error(`Endpoint timed out after ${applicationOptions.endpointTimeoutMs}ms`));
+                    }, applicationOptions.endpointTimeoutMs);
+                });
+                result = await Promise.race([fn(req, match, controller.signal), timeoutPromise]);
+            } else {
+                result = await fn(req, match, controller.signal);
             }
-        },
-    }) as EndpointFunction;
+            if (result === null || typeof result !== "object"
+                || typeof (result as EndpointResult).success !== "boolean"
+                || ((result as EndpointResult).errorMessage !== undefined && typeof (result as EndpointResult).errorMessage !== "string")) {
+                throw new Error(`YOUR TYPESCRIPT ENDPOINT FUNCTION DID NOT RETURN AN OBJECT WITH A BOOLEAN 'success' PROPERTY AND AN OPTIONAL 'errorMessage' STRING PROPERTY! Method: ${routeConfig.method}, Route: ${routeConfig.routeURLPattern}, File: ${routeConfig.routeEndpointTypeScriptFile}`);
+            }
+            const typed = result as EndpointResult;
+            if (typed.success) routeConfig.passCount++; else routeConfig.failCount++;
+            return typed;
+        } catch (error) {
+            // Every failure mode is a denial and counts as one. Log a
+            // single sanitised line rather than a stack trace: an
+            // unauthenticated caller can trigger this on every request.
+            routeConfig.failCount++;
+            console.error(`[${new Date().toISOString()}] endpoint ${routeConfig.routeEndpointTypeScriptFile} failed: ${sanitizeForLog(errName(error))}: ${sanitizeForLog(errMsg(error))}`);
+            return {success: false, errorMessage: "Unknown auth error"};
+        } finally {
+            if (timeoutId !== undefined) clearTimeout(timeoutId);
+        }
+    };
 }
 
 function displayHelp() {
     console.log(`
       Server usage:
 
-      server --config-dir <config_directory> [--db-filename <database_path>] [--update-period <update_period_in_milliseconds>] [--disable-stats] [--version] [--help] [--port <port_number>] [--listen-address <listen_address>] [--header-name-uri <header_name>] [--header-name-method <header_name>]
+      checkpoint401 [--config-dir <dir>] [--db-filename <path>] [--update-period <ms>] [--disable-stats] [--verbose] [--quiet] [--version] [--help] [--port <n>] [--listen-address <addr>] [--header-name-uri <name>] [--header-name-method <name>] [--strict-uri] [--no-strict-uri] [--no-error-body] [--endpoint-timeout-ms <ms>] [--shutdown-timeout-ms <ms>] [--max-in-flight <n>]
 
-      --config-dir: Path to the directory containing configuration files (default: .)
-      --db-filename: Path to the SQLite database file (default: route_stats_counters.db)
-      --update-period: Period in milliseconds to update the database and write counters to disk (default: 10000)
-      --disable-stats: Disable the stats feature
-      --verbose: Enable verbose logging (default: on)
-      --quiet: Disable verbose per-request logging. Verbose logs include the full request URL, which can contain tokens/PII passed in the query string.
+      --config-dir: Directory containing routes.json, the endpoint files and any helper .ts files (default: current directory)
+      --db-filename: Path to the SQLite stats database (default: route_stats_counters.db in the current directory). The DIRECTORY must be writable: SQLite creates journal files beside the DB.
+      --update-period: Period in milliseconds to flush counters to the database (default: 10000)
+      --disable-stats: Disable the stats feature entirely. No database is opened or created, so no write permission is needed.
+      --verbose: Enable per-request logging (status, method, matched pattern, request path without query string). Off by default.
+      --quiet: Disable per-request logging (the default; kept for compatibility).
       --version: Display server version
       --help: Show help message
       --port: Port number to listen on (default: 3000 or PORT environment variable). If both are set, the server will exit with an error.
       --listen-address: Address to listen on (default: 127.0.0.1 or LISTEN_ADDRESS environment variable). If both are set, the server will exit with an error.
-      --header-name-uri: Name of the header for URI (default: X-Forwarded-Uri)
-      --header-name-method: Name of the header for method (default: X-Forwarded-Method)
-      --strict-uri: Reject inbound X-Forwarded-Uri values that are not '/'-prefixed paths or contain CR/LF/NUL bytes. Off by default for compatibility; recommended for new deployments.
+      --header-name-uri: Name of the header carrying the original request URI (default: X-Forwarded-Uri)
+      --header-name-method: Name of the header carrying the original request method (default: X-Forwarded-Method)
+      --strict-uri: Reject inbound URI values that are not '/'-prefixed paths, start with '//', or contain backslashes, dot segments, '#', control bytes, or percent-encoded forms of any of those. ON by default; this flag is accepted for compatibility.
+      --no-strict-uri: Turn the above off. Only do this if your proxy sends something other than a plain request path and you understand the parser-differential risk.
       --no-error-body: Do not include the endpoint's errorMessage in 401 response bodies. Off by default. Recommended if your reverse proxy forwards the auth response body to clients or error pages, since distinct error strings can enable user enumeration.
-      --endpoint-timeout-ms: Maximum time (ms) an endpoint function may run before the request is failed-closed (returned as 401). Set to 0 (default) to disable. Recommended for new deployments to prevent slow endpoints from tying up request slots indefinitely.
+      --endpoint-timeout-ms: Maximum time (ms) an endpoint function may run before the request is failed-closed (returned as 401) and the endpoint's AbortSignal fires (default: 10000). 0 disables.
+      --shutdown-timeout-ms: On SIGTERM/SIGINT, how long (ms) to wait for in-flight requests to drain before flushing counters and exiting anyway (default: 10000). A second signal exits immediately.
+      --max-in-flight: Maximum concurrent requests being evaluated (default: 1024). Requests above the limit get 503 without running any endpoint. 0 disables.
 
       **Configuration Files:**
 
       - routes.json: This file defines the routes for the server. It should be a JSON array with each object containing the following properties:
           - method: HTTP method (GET, POST, etc.)
           - routeURLPattern: A URL Pattern API pathname pattern (https://developer.mozilla.org/en-US/docs/Web/API/URLPattern)
-          - routeEndpointTypeScriptFile: Flat filename (no '/' or '..') of the TypeScript endpoint handler in the config/ directory next to checkpoint401.ts.
+          - routeEndpointTypeScriptFile: Flat filename (no '/' or '..') of the TypeScript endpoint handler, located in the config directory.
 
-      - config/<file_name>.ts: Each endpoint TypeScript file must export a default async function with signature:
-          (req: Request, match: URLPatternResult | null) => Promise<{ success: boolean; errorMessage?: string }>
+      - <config-dir>/<file_name>.ts: Each endpoint TypeScript file must export a default async function with signature:
+          (req: Request, match: URLPatternResult | null, signal?: AbortSignal) => Promise<{ success: boolean; errorMessage?: string }>
         Any other .ts file in the config directory is also imported on startup so endpoints can share helpers.
+        Any loaded module may export 'onShutdown(): Promise<void> | void'; it is awaited during graceful shutdown. Modules must not install signal handlers or call Deno.exit().
   `);
 }
 
 interface ApplicationOptions {
-    currentWorkingDir: string;
+    configDir: string;
     dbFilename: string;
     disableStats: boolean;
     hostname: string;
@@ -457,76 +508,74 @@ interface ApplicationOptions {
     headerNameMethod: string;
     strictUri: boolean;
     suppressErrorBody: boolean;
-    endpointTimeoutMs: number; // 0 disables the timeout (default).
+    endpointTimeoutMs: number; // 0 disables the timeout.
+    shutdownTimeoutMs: number;
+    maxInFlight: number; // 0 disables the cap.
 }
 
 function printApplicationOptions(options: ApplicationOptions) {
-    console.log(`currentWorkingDir: ${options.currentWorkingDir}`);
-    console.log(`dbFilename: ${options.dbFilename}`);
-    console.log(`disableStats: ${options.disableStats}`);
-    console.log(`hostname: ${options.hostname}`);
-    console.log(`port: ${options.port}`);
-    console.log(`updatePeriod: ${options.updatePeriod}`);
-    console.log(`verbose: ${options.verbose}`);
-    console.log(`headerNameUri: ${options.headerNameUri}`);
-    console.log(`headerNameMethod: ${options.headerNameMethod}`);
-    console.log(`strictUri: ${options.strictUri}`);
-    console.log(`suppressErrorBody: ${options.suppressErrorBody}`);
-    console.log(`endpointTimeoutMs: ${options.endpointTimeoutMs}`);
+    for (const [key, value] of Object.entries(options)) {
+        console.log(`${key}: ${value}`);
+    }
 }
 
 function parseArgs(args: string[]): ApplicationOptions {
     const applicationOptions: ApplicationOptions = {
         dbFilename: "route_stats_counters.db",
-        currentWorkingDir: Deno.cwd(),
+        configDir: Deno.cwd(),
         disableStats: false,
         hostname: `127.0.0.1`,
         port: 3000,
         updatePeriod: 10000,
-        verbose: true,
+        verbose: false,
         headerNameUri: "X-Forwarded-Uri",
         headerNameMethod: "X-Forwarded-Method",
-        strictUri: false,
+        strictUri: true,
         suppressErrorBody: false,
-        endpointTimeoutMs: 0,
+        endpointTimeoutMs: 10000,
+        shutdownTimeoutMs: 10000,
+        maxInFlight: 1024,
     };
 
-    function validatePort(port: string): number {
-        const parsedPort = Number(port);
-        if (isNaN(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
-            console.error("Error: --port option requires a valid port number between 1 and 65535.");
-            Deno.exit(1);
-        }
-        return parsedPort;
+    const MAX_TIMER_MS = 2 ** 31 - 1; // setTimeout int32 limit; larger values fire immediately.
+
+    function fail(message: string): never {
+        console.error(`Error: ${message}`);
+        Deno.exit(1);
     }
 
-    function validateUpdatePeriod(period: string): number {
-        const parsedPeriod = Number(period);
-        // setTimeout uses an int32 internally; values above 2^31 - 1
-        // ms (~24.8 days) silently degrade to 1ms and the periodic
-        // flush hot-loops. Cap below that. isNaN() also misses
-        // Infinity, so use Number.isFinite explicitly.
-        const MAX_UPDATE_PERIOD_MS = 2 ** 31 - 1;
-        if (!Number.isFinite(parsedPeriod) || parsedPeriod < 1000 || parsedPeriod > MAX_UPDATE_PERIOD_MS) {
-            console.error(`Error: --update-period option requires a finite number between 1000 and ${MAX_UPDATE_PERIOD_MS} (about 24 days).`);
-            Deno.exit(1);
+    function parseInteger(flag: string, raw: string, min: number, max: number): number {
+        // Number() accepts "3000.5", "0x1000", " 3000 " and "1e3"; a
+        // port or millisecond count should be a plain decimal integer.
+        if (!/^\d+$/.test(raw)) {
+            fail(`${flag} requires a plain decimal integer, got '${raw}'.`);
         }
-        return parsedPeriod;
+        const parsed = Number(raw);
+        if (!Number.isSafeInteger(parsed) || parsed < min || parsed > max) {
+            fail(`${flag} must be between ${min} and ${max}, got '${raw}'.`);
+        }
+        return parsed;
     }
+
+    const validatePort = (raw: string) => parseInteger("--port", raw, 1, 65535);
 
     let portFromCli = false;
     let hostnameFromCli = false;
     let verboseFromCli = false;
     let quietFromCli = false;
+    let strictFromCli = false;
+    let noStrictFromCli = false;
+
+    function takeValue(i: number, flag: string, what: string): string {
+        if (i + 1 >= args.length) fail(`${flag} option requires ${what}.`);
+        return args[i + 1];
+    }
 
     const seenFlags = new Set<string>();
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg.startsWith("--")) {
-            if (seenFlags.has(arg)) {
-                console.error(`Error: ${arg} was passed more than once.`);
-                Deno.exit(1);
-            }
+            if (seenFlags.has(arg)) fail(`${arg} was passed more than once.`);
             seenFlags.add(arg);
         }
         switch (arg) {
@@ -544,99 +593,66 @@ function parseArgs(args: string[]): ApplicationOptions {
                 break;
             case "--strict-uri":
                 applicationOptions.strictUri = true;
+                strictFromCli = true;
+                break;
+            case "--no-strict-uri":
+                applicationOptions.strictUri = false;
+                noStrictFromCli = true;
                 break;
             case "--no-error-body":
                 applicationOptions.suppressErrorBody = true;
                 break;
             case "--endpoint-timeout-ms":
-                if (i + 1 < args.length) {
-                    const parsed = Number(args[i + 1]);
-                    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 2 ** 31 - 1) {
-                        console.error("Error: --endpoint-timeout-ms requires a finite non-negative integer (0 disables, max ~24 days).");
-                        Deno.exit(1);
-                    }
-                    applicationOptions.endpointTimeoutMs = Math.floor(parsed);
-                    i++;
-                } else {
-                    console.error("Error: --endpoint-timeout-ms requires a number of milliseconds.");
-                    Deno.exit(1);
-                }
+                applicationOptions.endpointTimeoutMs = parseInteger(arg, takeValue(i, arg, "a number of milliseconds"), 0, MAX_TIMER_MS);
+                i++;
+                break;
+            case "--shutdown-timeout-ms":
+                applicationOptions.shutdownTimeoutMs = parseInteger(arg, takeValue(i, arg, "a number of milliseconds"), 0, MAX_TIMER_MS);
+                i++;
+                break;
+            case "--max-in-flight":
+                applicationOptions.maxInFlight = parseInteger(arg, takeValue(i, arg, "a request count"), 0, Number.MAX_SAFE_INTEGER);
+                i++;
                 break;
             case "--db-filename":
-                if (i + 1 < args.length) {
-                    applicationOptions.dbFilename = args[i + 1];
-                    i++;
-                } else {
-                    console.error("Error: --db-filename option requires a database filename.");
-                    Deno.exit(1);
-                }
+                applicationOptions.dbFilename = takeValue(i, arg, "a database filename");
+                i++;
                 break;
             case "--update-period":
-                if (i + 1 < args.length) {
-                    applicationOptions.updatePeriod = validateUpdatePeriod(args[i + 1]);
-                    i++;
-                } else {
-                    console.error("Error: --update-period option requires a number.");
-                    Deno.exit(1);
-                }
+                applicationOptions.updatePeriod = parseInteger(arg, takeValue(i, arg, "a number of milliseconds"), 1000, MAX_TIMER_MS);
+                i++;
                 break;
             case "--disable-stats":
                 applicationOptions.disableStats = true;
                 break;
             case "--port":
-                if (i + 1 < args.length) {
-                    applicationOptions.port = validatePort(args[i + 1]);
-                    portFromCli = true;
-                    i++;
-                } else {
-                    console.error("Error: --port option requires a number.");
-                    Deno.exit(1);
-                }
+                applicationOptions.port = validatePort(takeValue(i, arg, "a port number"));
+                portFromCli = true;
+                i++;
                 break;
             case "--listen-address":
-                if (i + 1 < args.length) {
-                    applicationOptions.hostname = args[i + 1];
-                    hostnameFromCli = true;
-                    i++;
-                } else {
-                    console.error("Error: --listen-address option requires an address.");
-                    Deno.exit(1);
-                }
+                applicationOptions.hostname = takeValue(i, arg, "an address");
+                hostnameFromCli = true;
+                i++;
                 break;
             case "--header-name-uri":
-                if (i + 1 < args.length) {
-                    applicationOptions.headerNameUri = args[i + 1];
-                    i++;
-                } else {
-                    console.error("Error: --header-name-uri option requires a header name.");
-                    Deno.exit(1);
-                }
+                applicationOptions.headerNameUri = takeValue(i, arg, "a header name");
+                i++;
                 break;
             case "--header-name-method":
-                if (i + 1 < args.length) {
-                    applicationOptions.headerNameMethod = args[i + 1];
-                    i++;
-                } else {
-                    console.error("Error: --header-name-method option requires a header name.");
-                    Deno.exit(1);
-                }
+                applicationOptions.headerNameMethod = takeValue(i, arg, "a header name");
+                i++;
                 break;
             case "--config-dir":
-                if (i + 1 < args.length) {
-                    applicationOptions.currentWorkingDir = args[i + 1];
-                    i++;
-                } else {
-                    console.error("Error: --config-dir option requires a directory path.");
-                    Deno.exit(1);
-                }
+                applicationOptions.configDir = takeValue(i, arg, "a directory path");
+                i++;
                 break;
             case "--help":
                 displayHelp();
                 Deno.exit(0);
                 break;
             default:
-                console.error(`Unknown argument: ${arg}`);
-                Deno.exit(1);
+                fail(`Unknown argument: ${arg}`);
         }
     }
 
@@ -646,45 +662,40 @@ function parseArgs(args: string[]): ApplicationOptions {
     // var was indistinguishable from "not set on CLI" and the conflict
     // check silently skipped.
     const envPort = Deno.env.get("PORT");
-    if (portFromCli && envPort) {
-        console.error("Error: Both command-line argument and environment variable are set for port.");
-        Deno.exit(1);
-    }
+    if (portFromCli && envPort) fail("Both command-line argument and environment variable are set for port.");
 
     const envhostname = Deno.env.get("LISTEN_ADDRESS");
-    if (hostnameFromCli && envhostname) {
-        console.error("Error: Both command-line argument and environment variable are set for listen address.");
-        Deno.exit(1);
-    }
+    if (hostnameFromCli && envhostname) fail("Both command-line argument and environment variable are set for listen address.");
 
     // If only environment variables are set, apply them
-    if (!portFromCli && envPort) {
-        applicationOptions.port = validatePort(envPort);
-    }
-    if (!hostnameFromCli && envhostname) {
-        applicationOptions.hostname = envhostname;
-    }
+    if (!portFromCli && envPort) applicationOptions.port = validatePort(envPort);
+    if (!hostnameFromCli && envhostname) applicationOptions.hostname = envhostname;
 
-    if (verboseFromCli && quietFromCli) {
-        console.error("Error: --verbose and --quiet are mutually exclusive.");
-        Deno.exit(1);
-    }
+    if (verboseFromCli && quietFromCli) fail("--verbose and --quiet are mutually exclusive.");
+    if (strictFromCli && noStrictFromCli) fail("--strict-uri and --no-strict-uri are mutually exclusive.");
 
     // Header names must be non-empty token chars per RFC 7230, and the
     // URI and method headers must differ - otherwise both reads return
     // the same value and the router can never match.
     const httpTokenChars = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
     if (!httpTokenChars.test(applicationOptions.headerNameUri)) {
-        console.error(`Error: --header-name-uri '${applicationOptions.headerNameUri}' is not a valid HTTP header name.`);
-        Deno.exit(1);
+        fail(`--header-name-uri '${applicationOptions.headerNameUri}' is not a valid HTTP header name.`);
     }
     if (!httpTokenChars.test(applicationOptions.headerNameMethod)) {
-        console.error(`Error: --header-name-method '${applicationOptions.headerNameMethod}' is not a valid HTTP header name.`);
-        Deno.exit(1);
+        fail(`--header-name-method '${applicationOptions.headerNameMethod}' is not a valid HTTP header name.`);
     }
     if (applicationOptions.headerNameUri.toLowerCase() === applicationOptions.headerNameMethod.toLowerCase()) {
-        console.error(`Error: --header-name-uri and --header-name-method must differ (both set to '${applicationOptions.headerNameUri}').`);
-        Deno.exit(1);
+        fail(`--header-name-uri and --header-name-method must differ (both set to '${applicationOptions.headerNameUri}').`);
+    }
+
+    // Resolve the config dir to an absolute, existing directory once,
+    // so file reads and dynamic imports agree on where it is
+    // regardless of cwd or this script's location.
+    try {
+        applicationOptions.configDir = Deno.realPathSync(resolve(applicationOptions.configDir));
+        if (!Deno.statSync(applicationOptions.configDir).isDirectory) throw new Error("not a directory");
+    } catch (error) {
+        fail(`--config-dir '${applicationOptions.configDir}' is not a readable directory: ${errMsg(error)}`);
     }
 
     return applicationOptions;
@@ -695,65 +706,81 @@ function printVersion() {
     console.log(`checkpoint401 version ${VERSION}`);
 }
 
+// Structural checks against the value the proxy passed in via
+// X-Forwarded-Uri. The URL parser behind URLPattern (WHATWG) is
+// lenient: it turns '\' into '/', resolves '.' and '..' segments, and
+// accepts absolute and protocol-relative URLs. The reverse proxy
+// forwards the RAW URI to the backend, whose parser may disagree, so
+// anything the two could interpret differently is rejected here
+// rather than authorised on our interpretation. Also rejects control
+// bytes, raw or percent-encoded, which otherwise reach log lines and
+// error messages via match groups.
+// Percent-encoded control bytes, '.', '/', '\\' and '#': all of these
+// change meaning between a decoding parser and a non-decoding one.
+const PERCENT_ENCODED_RISKY = /%(0[0-9a-f]|1[0-9a-f]|7f|2e|2f|5c|23)/i;
+
 function validateInboundUri(uri: string): void {
-    // Cheap structural checks against the value the proxy passed in via
-    // X-Forwarded-Uri. This catches:
-    //   - header-injection bytes (CR/LF/NUL) in raw form OR percent-
-    //     encoded form. URLPattern URL-decodes path segments before
-    //     binding them to named match groups, so an attacker who can
-    //     reach the auth port can smuggle CR/LF into a match group
-    //     (and from there into log lines and error messages) by
-    //     encoding it as %0A / %0D / %00 even when the raw header
-    //     value passes the basic check.
-    //   - absolute URLs that would let an attacker steer URLPattern
-    //     onto a different host's pathname semantics
-    //   - non-path values that are obviously not what the proxy meant
-    //     to send, helping detect proxy misconfiguration early.
     if (uri.length === 0 || uri.length > 8192) {
         throw new Error("AUTH: inbound URI is empty or too long");
     }
-    if (/[\r\n\0]/.test(uri)) {
-        throw new Error("AUTH: inbound URI contains CR/LF/NUL");
-    }
-    if (/%0[0adAD]/.test(uri)) {
-        throw new Error("AUTH: inbound URI contains percent-encoded CR/LF/NUL");
-    }
     if (!uri.startsWith("/")) {
         throw new Error("AUTH: inbound URI must start with '/'");
+    }
+    if (uri.startsWith("//")) {
+        throw new Error("AUTH: inbound URI must not start with '//' (protocol-relative URL)");
+    }
+    if (/[\x00-\x1f\x7f]/.test(uri)) {
+        throw new Error("AUTH: inbound URI contains control bytes");
+    }
+    if (uri.includes("#")) {
+        throw new Error("AUTH: inbound URI contains a fragment");
+    }
+    // The remaining checks are about how the PATH is parsed, so they
+    // apply to the path only. Query strings legitimately carry encoded
+    // slashes and dots (e.g. ?redirect=%2Fhome) and the URL parser does
+    // not treat backslashes or dot segments specially there.
+    const q = uri.indexOf("?");
+    const path = q === -1 ? uri : uri.slice(0, q);
+    if (path.includes("\\")) {
+        throw new Error("AUTH: inbound URI path contains a backslash");
+    }
+    if (PERCENT_ENCODED_RISKY.test(path)) {
+        throw new Error("AUTH: inbound URI path contains a percent-encoded control byte, '.', '/', '\\' or '#'");
+    }
+    for (const segment of path.split("/")) {
+        if (segment === "." || segment === "..") {
+            throw new Error("AUTH: inbound URI path contains a dot segment");
+        }
     }
 }
 
 function patchMethodAndUriIntoRequest(request: Request, applicationOptions: ApplicationOptions): Request {
     // This function is a workaround to patch the method and URL into the request object
     // because the web server sends us the method and url in headers
-    try {
-        const method = getInboundMethodFromHeaders(request, applicationOptions.headerNameMethod);
-        const url = getInboundUriFromHeaders(request, applicationOptions.headerNameUri);
-        if (applicationOptions.strictUri) {
-            validateInboundUri(url);
-        }
-
-        const handler = {
-            get: function(target: Request, prop: string) {
-                if (prop === 'method') {
-                    return method;
-                }
-                if (prop === 'url') {
-                    return url;
-                }
-                const value = (target as any)[prop];
-                // Native Request methods (json, text, arrayBuffer, clone,
-                // formData, blob) check internal slots on `this`. If we
-                // return the function unbound, calling it on the proxy
-                // throws TypeError, so endpoints that read the body fail.
-                return typeof value === 'function' ? value.bind(target) : value;
-            }
-        };
-
-        return new Proxy(request, handler);
-    } catch (error) {
-        throw new Error(`Error modifying request: ${error.message}`);
+    const method = getRequiredHeader(request, applicationOptions.headerNameMethod);
+    const url = getRequiredHeader(request, applicationOptions.headerNameUri);
+    if (applicationOptions.strictUri) {
+        validateInboundUri(url);
     }
+
+    const handler = {
+        get: function (target: Request, prop: string | symbol) {
+            if (prop === 'method') {
+                return method;
+            }
+            if (prop === 'url') {
+                return url;
+            }
+            const value = (target as unknown as Record<string | symbol, unknown>)[prop];
+            // Native Request methods (json, text, arrayBuffer, clone,
+            // formData, blob) check internal slots on `this`. If we
+            // return the function unbound, calling it on the proxy
+            // throws TypeError, so endpoints that read the body fail.
+            return typeof value === 'function' ? value.bind(target) : value;
+        }
+    };
+
+    return new Proxy(request, handler);
 }
 
 async function runServer(): Promise<void> {
@@ -762,47 +789,115 @@ async function runServer(): Promise<void> {
         const args = Deno.args;
         const applicationOptions: ApplicationOptions = parseArgs(args);
         printApplicationOptions(applicationOptions);
-        const dbManager = new DatabaseManager(applicationOptions.dbFilename);
-        await dbManager.createTableIfNotExists();
-        const { router, routeItems } = await setupRoutes(applicationOptions, dbManager);
-        await loadAdditionalTsFiles(applicationOptions);
 
+        // With --disable-stats no database is touched at all, so the
+        // process needs no write permission.
+        let dbManager: DatabaseManager | null = null;
+        if (!applicationOptions.disableStats) {
+            dbManager = new DatabaseManager(applicationOptions.dbFilename);
+            dbManager.createTableIfNotExists();
+        }
+
+        const loaded: LoadedModules = {shutdownHooks: []};
+        const {router, routeItems} = await setupRoutes(applicationOptions, loaded);
+        await loadAdditionalTsFiles(applicationOptions, routeItems, loaded);
+
+        if (dbManager) {
+            dbManager.insertInitialStats(routeItems);
+            timers.periodicFlush = setTimeout(() => {
+                timers.periodicFlush = updateDatabasePeriodically(dbManager!, routeItems, applicationOptions);
+            }, applicationOptions.updatePeriod);
+        }
+
+        let inFlight = 0;
         const server = Deno.serve(
-            {hostname: applicationOptions.hostname, port: applicationOptions.port},
-            (req) => router.handleRequest(patchMethodAndUriIntoRequest(req, applicationOptions))
+            {
+                hostname: applicationOptions.hostname,
+                port: applicationOptions.port,
+                // Anything that escapes the handler is a bug on our side,
+                // not grounds to let a request through. Deny, and log one
+                // line rather than Deno's default stack dump.
+                onError: (error) => {
+                    console.error("Unhandled error in request handler:", sanitizeForLog(errMsg(error)));
+                    return new Response(null, {status: 401, headers: {"WWW-Authenticate": "Bearer realm=\"checkpoint401\""}});
+                },
+            },
+            async (req) => {
+                if (applicationOptions.maxInFlight > 0 && inFlight >= applicationOptions.maxInFlight) {
+                    // Shed load before running any endpoint code. 503 is
+                    // still a denial to the proxy, but distinguishable
+                    // from a real auth failure in logs and metrics.
+                    return makeResponse(503, applicationOptions, req, null);
+                }
+                inFlight++;
+                try {
+                    let patched: Request;
+                    try {
+                        patched = patchMethodAndUriIntoRequest(req, applicationOptions);
+                    } catch (error) {
+                        // Missing/invalid forwarded headers: almost always a
+                        // proxy misconfiguration, or someone talking to the
+                        // auth port directly. Deny with 401, not 500.
+                        console.error("Rejected request:", sanitizeForLog(errMsg(error)));
+                        return makeResponse(401, applicationOptions, req, null);
+                    }
+                    return await router.handleRequest(patched);
+                } finally {
+                    inFlight--;
+                }
+            },
         );
 
-        // Graceful shutdown: stop accepting new requests, wait for
-        // in-flight handlers to finish, flush any unflushed counters
+        // Graceful shutdown: stop accepting new requests, wait (bounded)
+        // for in-flight handlers to finish, flush any unflushed counters
         // so the periodic-flush gap doesn't lose them across restarts,
-        // then close the DB. shuttingDown guards against re-entry if
-        // both SIGTERM and SIGINT arrive in quick succession.
-        let shuttingDown = false;
-        const shutdown = async () => {
-            if (shuttingDown) return;
-            shuttingDown = true;
-            try {
-                await server.shutdown();
-            } catch (error) {
-                console.error("Error draining server:", error.message);
+        // run module shutdown hooks, close the DB, exit. A second
+        // signal while that is in progress exits immediately.
+        let signalsSeen = 0;
+        const shutdown = async (signal: string) => {
+            signalsSeen++;
+            if (signalsSeen > 1) {
+                console.error(`Received ${signal} again during shutdown; exiting immediately.`);
+                try { dbManager?.close(); } catch { /* best effort */ }
+                Deno.exit(1);
             }
-            if (!applicationOptions.disableStats) {
+            console.log(`Received ${signal}; draining in-flight requests (up to ${applicationOptions.shutdownTimeoutMs}ms)...`);
+            if (timers.periodicFlush !== undefined) clearTimeout(timers.periodicFlush);
+            let drainTimer: TimerId | undefined;
+            try {
+                await Promise.race([
+                    server.shutdown(),
+                    new Promise<void>((resolve) => {
+                        drainTimer = setTimeout(() => {
+                            console.error(`Drain timed out after ${applicationOptions.shutdownTimeoutMs}ms with ${inFlight} request(s) still in flight; continuing shutdown.`);
+                            resolve();
+                        }, applicationOptions.shutdownTimeoutMs);
+                    }),
+                ]);
+            } catch (error) {
+                console.error("Error draining server:", errMsg(error));
+            } finally {
+                if (drainTimer !== undefined) clearTimeout(drainTimer);
+            }
+            if (dbManager) {
                 try {
-                    const snapshot = routeItems.map(route => ({
-                        method: route.method,
-                        routeURLPattern: route.routeURLPattern,
-                        passCount: route.passCount ?? 0,
-                        failCount: route.failCount ?? 0,
-                    })) as RouteItem[];
-                    await dbManager.updateDatabase(snapshot);
+                    flushCounters(dbManager, routeItems);
                 } catch (error) {
-                    console.error("Error flushing counters on shutdown:", error.message);
+                    console.error("Error flushing counters on shutdown:", errMsg(error));
+                }
+            }
+            for (const {name, hook} of loaded.shutdownHooks) {
+                try {
+                    await hook();
+                    console.log(`Shutdown hook in ${name} completed.`);
+                } catch (error) {
+                    console.error(`Shutdown hook in ${name} failed:`, errMsg(error));
                 }
             }
             try {
-                dbManager.close();
+                dbManager?.close();
             } catch (error) {
-                console.error("Error closing DB:", error.message);
+                console.error("Error closing DB:", errMsg(error));
             }
             Deno.exit();
         };
@@ -811,13 +906,13 @@ async function runServer(): Promise<void> {
         // the others from being installed.
         for (const signal of ["SIGTERM", "SIGINT"] as const) {
             try {
-                Deno.addSignalListener(signal, () => { shutdown(); });
+                Deno.addSignalListener(signal, () => { shutdown(signal); });
             } catch (error) {
-                console.warn(`Could not install ${signal} handler: ${error.message}`);
+                console.warn(`Could not install ${signal} handler: ${errMsg(error)}`);
             }
         }
     } catch (error) {
-        console.error("Server startup failed:", error.message);
+        console.error("Server startup failed:", errMsg(error));
         Deno.exit(1);
     }
 }
