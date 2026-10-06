@@ -49,8 +49,6 @@ RestrictNamespaces=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=no
 SystemCallArchitectures=native
-SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources
 # Allow the graceful drain (--shutdown-timeout-ms, default 10s) to finish
 # before systemd escalates to SIGKILL.
 TimeoutStopSec=20
